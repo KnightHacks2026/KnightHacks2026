@@ -10,6 +10,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
 import { formatAssetUnits, formatUtc, reasonLabel } from "./format";
+import { SettlementIntelligence } from "./settlement-intelligence";
 import "./command-center.css";
 
 const SettlementGraph = dynamic(() => import("./settlement-graph").then((module) => module.SettlementGraph), {
@@ -106,7 +107,7 @@ export function CustodyTwinWorkspace() {
       <a className="cc-brand" href="#twin"><span className="cc-brand-mark">C</span>CustodyOS</a>
       <div className="cc-institution"><span className="cc-kicker">INSTITUTIONAL CUSTODY</span><strong>Demo Custodian <ChevronDown size={13} /></strong></div>
       <span className="cc-nav-label">WORKSPACE</span>
-      <nav className="cc-nav"><a className="is-active" href="#twin"><Activity size={16} />Command center</a><a href="#cascade"><GitBranch size={16} />Digital twin</a><a href="#scenario"><ArrowRight size={16} />Scenarios</a></nav>
+      <nav className="cc-nav"><a className="is-active" href="/"><Activity size={16} />Command center</a><a href="/twin"><GitBranch size={16} />Digital twin</a><a href="#scenario"><ArrowRight size={16} />Scenarios</a></nav>
       <div className="cc-sidebar-bottom"><span className="cc-avatar">CO</span><div><strong>Custody Operations</strong><small>Operations analyst</small></div></div>
     </aside>
     <main className="cc-main">
@@ -147,6 +148,7 @@ export function CustodyTwinWorkspace() {
         <Card className="cc-panel cc-inspector"><div className="cc-panel-heading"><div><span className="cc-kicker">SELECTED OBLIGATION</span><h2>{selected?.externalId.toUpperCase() ?? "Select a leg"}</h2></div><select aria-label="Inspect obligation" value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>{cascadeSnapshot.obligations.map((item) => <option key={item.id} value={item.id}>{item.externalId.toUpperCase()}</option>)}</select></div>{selected && selectedProjection && <div className="cc-inspector-body"><div><span>Required settlement</span><strong>{formatAssetUnits(selected.asset, selected.requiredUnits)}</strong></div><div><span>Route</span><strong>{accounts[selected.fromAccountId]} → {accounts[selected.toAccountId]}</strong></div><div><span>Reason</span><strong>{selectedProjection.reasonCodes.map(reasonLabel).join(", ") || "No reason supplied"}</strong></div><div><span>Source record</span><strong>{selected.sourceRecordIds.join(", ") || "None supplied"}</strong></div></div>}</Card>
         <Card className="cc-panel cc-comparison" id="comparison"><div className="cc-panel-heading"><div><span className="cc-kicker">DECISION VIEW</span><h2>Compare the paths</h2></div>{activeResult && <Badge tone="success"><Check size={12} />ENGINE RESULT</Badge>}</div><div className="cc-comparison-grid"><div><span className="cc-kicker">BASELINE / SNAPSHOT</span><h3>Current state</h3><ProjectionRows projection={activeResult?.baseline ?? projection} /></div><div><span className="cc-kicker">PROJECTED / SIMULATION</span><h3>With intervention</h3><ProjectionRows projection={activeResult?.projected} /></div></div>{activeResult?.comparison && <p className="cc-comparison-insight"><Activity size={15} /> {activeResult.comparison.newlySettledObligationIds.length} newly settled · {activeResult.comparison.stillBlockedObligationIds.length} still blocked · {activeResult.comparison.newlyAtRiskObligationIds.length} newly at risk</p>}{!activeResult && <p className="cc-review"><ShieldCheck size={14} />No projected outcome is shown until the simulation API returns a valid matching result.</p>}</Card>
       </section>
+      <SettlementIntelligence datasetId={cascadeImport.dataset.id} snapshotId={cascadeSnapshot.id} obligationId={selectedId} />
       <footer className="cc-footer"><span>All values from the fixed synthetic fixture · No live settlement instructions</span><span>CUSTODYOS · SANDBOX</span></footer>
     </main>
   </div>;

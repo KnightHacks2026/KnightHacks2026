@@ -52,7 +52,8 @@ function Navigation() {
       <div className="rail-top"><BrandMark /><span className="rail-wordmark">CUSTODY<span>OS</span></span></div>
       <div className="rail-group-label">WORKSPACE</div>
       <nav className="rail-nav">
-        <a className="rail-link is-active" href="#twin"><GitBranch size={18} /><span>Custody Twin</span><span className="rail-link__active" /></a>
+        <a className="rail-link" href="/"><Activity size={18} /><span>Command center</span></a>
+        <a className="rail-link is-active" href="/twin"><GitBranch size={18} /><span>Custody Twin</span><span className="rail-link__active" /></a>
         <a className="rail-link" href="#cascade"><Activity size={18} /><span>Dependency map</span></a>
         <a className="rail-link" href="#scenario"><Layers3 size={18} /><span>Scenarios</span></a>
         <a className="rail-link" href="#comparison"><Boxes size={18} /><span>Comparison</span></a>
