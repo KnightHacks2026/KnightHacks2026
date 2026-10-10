@@ -107,7 +107,7 @@ export function CustodyTwinWorkspace() {
       <a className="cc-brand" href="#twin"><span className="cc-brand-mark">C</span>CustodyOS</a>
       <div className="cc-institution"><span className="cc-kicker">INSTITUTIONAL CUSTODY</span><strong>Demo Custodian <ChevronDown size={13} /></strong></div>
       <span className="cc-nav-label">WORKSPACE</span>
-      <nav className="cc-nav"><a className="is-active" href="/"><Activity size={16} />Command center</a><a href="/twin"><GitBranch size={16} />Digital twin</a><a href="#scenario"><ArrowRight size={16} />Scenarios</a></nav>
+      <nav className="cc-nav"><a className="is-active" href="/"><Activity size={16} />Command center</a><a href="/twin"><GitBranch size={16} />Digital twin</a><a href="/twin#scenario"><ArrowRight size={16} />Scenarios</a></nav>
       <div className="cc-sidebar-bottom"><span className="cc-avatar">CO</span><div><strong>Custody Operations</strong><small>Operations analyst</small></div></div>
     </aside>
     <main className="cc-main">
