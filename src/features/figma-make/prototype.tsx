@@ -440,7 +440,7 @@ function Transactions({ data, onNewTransfer, notice }: { data: ExampleData; onNe
   const displayed = useMemo(() => filter === "All activity" ? data.transactions : data.transactions.filter(t => t.status === filter), [filter, data.transactions]);
   return (
     <main className="page transactions-page">
-      <PageHeading eyebrow="TRANSACTIONS / LIVE LEDGER" title="Transaction Monitor" description="Authorization, compliance screening, and settlement state across every asset movement." actions={<button className="button primary" onClick={onNewTransfer}>Initiate transfer</button>} />
+      <PageHeading eyebrow="TRANSACTIONS / LIVE LEDGER" title="Transaction Monitor" description="Authorization, compliance screening, and settlement state across every asset movement." actions={<button className="button primary" onClick={onNewTransfer}>New transfer</button>} />
       {notice && <p className="transfer-notice" role="status">{notice}</p>}
       <div className="transaction-toolbar">
         <div>{["All activity", "Pending approval", "Screening", "Completed"].map(x => <button key={x} className={filter === x ? "active" : ""} onClick={() => setFilter(x)}>{x}</button>)}</div>
