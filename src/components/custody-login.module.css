@@ -70,6 +70,7 @@
   width: min(100%, 452px);
   margin: auto 0;
   padding: 0;
+  transform: translateY(25px);
 }
 
 .kicker,
@@ -168,7 +169,7 @@
   justify-content: space-between;
   gap: 16px;
   width: 100%;
-  margin-top: 4px;
+  margin-top: 9px;
   padding: 0 12px 0 16px;
   border: 0;
   border-radius: 9px;
@@ -544,6 +545,7 @@
   .accessBody {
     width: min(100%, 500px);
     margin: 64px 0 56px;
+    transform: none;
   }
 
   .accessBody h1 {
