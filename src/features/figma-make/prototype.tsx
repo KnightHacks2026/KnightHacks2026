@@ -1,8 +1,7 @@
 "use client";
 
-// Figma Make prototype data below is demo/sample data and is not connected to CustodyOS APIs.
 import { useEffect, useMemo, useRef, useState } from "react";
-import { exampleData } from "@/contracts";
+import { exampleData, type ExampleData } from "@/contracts";
 
 type Page = "Overview" | "Digital Twin" | "Portfolios" | "Transactions" | "Policy Engine" | "Reporting";
 
@@ -28,7 +27,11 @@ const navigation: { label: Page; icon: IconName }[] = [
   { label: "Reporting", icon: "reporting" },
 ];
 
-const { assets, transactions, policies } = exampleData;
+const DEMO_USER_ID = "demo-user";
+
+type FinancialDataResponse =
+  | { ok: true; data: ExampleData & { userId: string; datasets: unknown[] } }
+  | { ok: false; error: { message: string } };
 
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
@@ -113,13 +116,21 @@ function PageHeading({ eyebrow, title, description, actions }: { eyebrow: string
   );
 }
 
-function DigitalTwin() {
+function DigitalTwin({ data }: { data: ExampleData }) {
   const [selected, setSelected] = useState("ACME BANK");
   const [dragging, setDragging] = useState<string | null>(null);
   const [viewport, setViewport] = useState({ x: 0, y: 0, width: 960, height: 550 });
-  const [nodes, setNodes] = useState(() => structuredClone(exampleData.nodes));
-  const edges = exampleData.edges;
+  const [nodes, setNodes] = useState(() => structuredClone(data.nodes));
+  const edges = data.edges;
   const nodeById = Object.fromEntries(nodes.map((node) => [node.id, node]));
+
+  useEffect(() => {
+    setNodes(structuredClone(data.nodes));
+  }, [data.nodes]);
+
+  useEffect(() => {
+    if (!data.nodes.some(node => node.id === selected)) setSelected(data.nodes[0]?.id ?? "");
+  }, [data.nodes, selected]);
 
   const moveNode = (event: React.PointerEvent<SVGSVGElement>) => {
     if (!dragging) return;
@@ -241,7 +252,8 @@ function EntityInspector({ selected }: { selected: string }) {
   );
 }
 
-function Overview() {
+function Overview({ data }: { data: ExampleData }) {
+  const { assets, transactions } = data;
   const bars = [38, 48, 45, 58, 56, 63, 72, 68, 78, 74, 82, 88, 84, 93, 90, 98, 94, 104, 112, 108, 118, 124, 121, 132];
   const [activeChartPoint, setActiveChartPoint] = useState<number | null>(null);
   const chartPoints = bars.map((height, index) => {
@@ -301,7 +313,8 @@ function Overview() {
   );
 }
 
-function Portfolios() {
+function Portfolios({ data }: { data: ExampleData }) {
+  const { assets } = data;
   const [active, setActive] = useState("Consolidated");
   return (
     <main className="page">
@@ -347,9 +360,9 @@ function Portfolios() {
   );
 }
 
-function Transactions() {
+function Transactions({ data }: { data: ExampleData }) {
   const [filter, setFilter] = useState("All activity");
-  const displayed = useMemo(() => filter === "All activity" ? transactions : transactions.filter(t => t.status === filter), [filter]);
+  const displayed = useMemo(() => filter === "All activity" ? data.transactions : data.transactions.filter(t => t.status === filter), [filter, data.transactions]);
   return (
     <main className="page transactions-page">
       <PageHeading eyebrow="TRANSACTIONS / LIVE LEDGER" title="Transaction Monitor" description="Authorization, compliance screening, and settlement state across every asset movement." actions={<button className="button primary">Initiate transfer</button>} />
@@ -388,25 +401,27 @@ function Transactions() {
   );
 }
 
-function PolicyEngine() {
+function PolicyEngine({ data }: { data: ExampleData }) {
   const [selected, setSelected] = useState(0);
+  const policies = data.policies;
+  const selectedPolicyIndex = Math.min(selected, Math.max(0, policies.length - 1));
   return (
     <main className="page policy-page">
       <PageHeading eyebrow="CONTROL PLANE / POLICY ENGINE" title="Programmable Governance" description="Authorization logic mapped directly to entities, wallets, transaction types, and risk limits." actions={<button className="button primary">Create policy</button>} />
       <div className="policy-workbench">
         <section className="policy-list">
           <div className="policy-list-title"><p className="eyebrow">POLICY LIBRARY</p><span>12 ACTIVE</span></div>
-          {policies.map((policy, i) => <button onClick={() => setSelected(i)} className={selected === i ? "active" : ""} key={policy.name}><span><strong>{policy.name}</strong><small>{policy.scope}</small></span><em>{policy.state}</em></button>)}
+          {policies.map((policy, i) => <button onClick={() => setSelected(i)} className={selectedPolicyIndex === i ? "active" : ""} key={policy.name}><span><strong>{policy.name}</strong><small>{policy.scope}</small></span><em>{policy.state}</em></button>)}
         </section>
         <section className="policy-canvas">
-          <div className="policy-canvas-head"><div><p className="eyebrow">POLICY / POL-00{selected + 1}</p><h2>{policies[selected].name}</h2></div><span className={policies[selected].state === "Review" ? "review" : ""}>● {policies[selected].state}</span></div>
+          {policies.length > 0 && <><div className="policy-canvas-head"><div><p className="eyebrow">POLICY / POL-00{selectedPolicyIndex + 1}</p><h2>{policies[selectedPolicyIndex].name}</h2></div><span className={policies[selectedPolicyIndex].state === "Review" ? "review" : ""}>● {policies[selectedPolicyIndex].state}</span></div>
           <div className="logic-flow">
-            <div className="logic-node"><span>WHEN</span><strong>Transaction initiated</strong><small>{policies[selected].scope}</small></div><i />
+            <div className="logic-node"><span>WHEN</span><strong>Transaction initiated</strong><small>{policies[selectedPolicyIndex].scope}</small></div><i />
             <div className="logic-node"><span>CHECK</span><strong>Risk & compliance</strong><small>Sanctions · velocity · allowlist</small></div><i />
-            <div className="logic-node featured"><span>REQUIRE</span><strong>{policies[selected].rule.split(" · ")[0]}</strong><small>Approved institutional signers</small></div><i />
-            <div className="logic-node"><span>ENFORCE</span><strong>{policies[selected].rule.split(" · ")[1] || "Verified route"}</strong><small>Block on policy exception</small></div>
+            <div className="logic-node featured"><span>REQUIRE</span><strong>{policies[selectedPolicyIndex].rule.split(" · ")[0]}</strong><small>Approved institutional signers</small></div><i />
+            <div className="logic-node"><span>ENFORCE</span><strong>{policies[selectedPolicyIndex].rule.split(" · ")[1] || "Verified route"}</strong><small>Block on policy exception</small></div>
           </div>
-          <div className="policy-metrics"><div><span>EXECUTIONS / 30D</span><strong>2,481</strong></div><div><span>BLOCKED</span><strong>14</strong></div><div><span>AVG. DECISION</span><strong>184ms</strong></div><div><span>COVERAGE</span><strong>{policies[selected].coverage}%</strong></div></div>
+          <div className="policy-metrics"><div><span>EXECUTIONS / 30D</span><strong>2,481</strong></div><div><span>BLOCKED</span><strong>14</strong></div><div><span>AVG. DECISION</span><strong>184ms</strong></div><div><span>COVERAGE</span><strong>{policies[selectedPolicyIndex].coverage}%</strong></div></div></>}
         </section>
       </div>
     </main>
@@ -465,6 +480,37 @@ function CommandPalette({ close, setPage }: { close: () => void; setPage: (page:
 export default function App() {
   const [page, setPage] = useState<Page>("Overview");
   const [commandOpen, setCommandOpen] = useState(false);
+  const [financialData, setFinancialData] = useState<ExampleData>(exampleData);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`/api/users/${encodeURIComponent(DEMO_USER_ID)}/financial-data`, { signal: controller.signal, cache: "no-store" })
+      .then(async response => {
+        const body = await response.json() as FinancialDataResponse;
+        if (!response.ok || !body.ok) {
+          throw new Error(body.ok ? `Financial data request failed with status ${response.status}.` : body.error.message);
+        }
+        if (body.data.userId !== DEMO_USER_ID
+          || !Array.isArray(body.data.assets)
+          || !Array.isArray(body.data.transactions)
+          || !Array.isArray(body.data.policies)
+          || !Array.isArray(body.data.nodes)
+          || !Array.isArray(body.data.edges)) {
+          throw new Error("Financial data endpoint returned an invalid response.");
+        }
+        setFinancialData({
+          assets: body.data.assets,
+          transactions: body.data.transactions,
+          policies: body.data.policies,
+          nodes: body.data.nodes,
+          edges: body.data.edges,
+        });
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) console.error("Unable to load demo financial data.", error);
+      });
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -484,11 +530,11 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [commandOpen]);
   const pages: Record<Page, React.ReactNode> = {
-    "Overview": <Overview />,
-    "Digital Twin": <DigitalTwin />,
-    "Portfolios": <Portfolios />,
-    "Transactions": <Transactions />,
-    "Policy Engine": <PolicyEngine />,
+    "Overview": <Overview data={financialData} />,
+    "Digital Twin": <DigitalTwin data={financialData} />,
+    "Portfolios": <Portfolios data={financialData} />,
+    "Transactions": <Transactions data={financialData} />,
+    "Policy Engine": <PolicyEngine data={financialData} />,
     "Reporting": <Reporting />,
   };
   return (
