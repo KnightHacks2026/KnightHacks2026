@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { CONTRACT_VERSION, exampleData, type AuditEvent, type Dataset, type DecimalInteger, type ExampleData, type FinancialSnapshot, type ImportDatasetRequest, type ImportDatasetResponse, type SourceRecord } from "@/contracts";
@@ -200,6 +200,57 @@ export async function saveExampleData(data: ExampleData): Promise<void> {
   try {
     writeExampleData(database, demoUserId(), data);
     database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export async function createExampleTransfer(input: {
+  userId: string;
+  assetType: string;
+  assetAmount: string;
+  assetSource: string;
+  senderName: string;
+}): Promise<
+  | { ok: true; transaction: ExampleData["transactions"][number] }
+  | { ok: false; reason: "ASSET_NOT_OWNED" | "ASSET_TYPE_MISMATCH" }
+> {
+  const database = await getDatabase();
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const ownedAsset = database.prepare(`SELECT symbol FROM example_assets
+      WHERE user_id = ? AND (symbol = ? COLLATE NOCASE OR name = ? COLLATE NOCASE)`)
+      .get(input.userId, input.assetSource, input.assetSource) as { symbol: string } | undefined;
+    if (!ownedAsset) {
+      database.exec("ROLLBACK");
+      return { ok: false, reason: "ASSET_NOT_OWNED" };
+    }
+    if (ownedAsset.symbol.toUpperCase() !== input.assetType.toUpperCase()) {
+      database.exec("ROLLBACK");
+      return { ok: false, reason: "ASSET_TYPE_MISMATCH" };
+    }
+
+    const position = database.prepare(`SELECT COALESCE(MAX(position), -1) + 1 AS position
+      FROM example_transactions WHERE user_id = ?`).get(input.userId) as { position: number };
+    const transaction = {
+      id: `TX-${randomUUID().toUpperCase()}`,
+      time: new Date().toISOString().slice(11, 19),
+      type: "Transfer",
+      asset: ownedAsset.symbol,
+      amount: `${input.assetAmount} ${ownedAsset.symbol}`,
+      value: "—",
+      route: `${input.senderName} → ${input.assetSource}`,
+      status: "Pending approval",
+    };
+    database.prepare(`INSERT INTO example_transactions
+      (user_id, position, id, time, type, asset, amount, value, route, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      input.userId, position.position, transaction.id, transaction.time, transaction.type, transaction.asset,
+      transaction.amount, transaction.value, transaction.route, transaction.status,
+    );
+    database.exec("COMMIT");
+    return { ok: true, transaction };
   } catch (error) {
     database.exec("ROLLBACK");
     throw error;
