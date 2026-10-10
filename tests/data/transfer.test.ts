@@ -1,9 +1,10 @@
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { POST as transfer } from "../../src/app/api/transfer/route";
+import { GET as financialData } from "../../src/app/api/users/[userId]/financial-data/route";
 import { getExampleData } from "../../src/lib/data/repository";
 
-const testRoutes = ["Transfer test sender → Bitcoin", "Test sender → Bitcoin"];
+const testRoutes = ["Bitcoin → Transfer test destination"];
 const testUserId = "demo-user";
 const cleanupTestTransfer = async () => {
   await getExampleData(testUserId);
@@ -31,11 +32,12 @@ const validTransfer = {
   assetType: "btc",
   assetAmount: "1.25",
   assetSource: "Bitcoin",
-  senderName: "Transfer test sender",
+  senderName: "Transfer test destination",
 };
 
 describe("POST /api/transfer", () => {
   it("adds a pending transfer for an asset the user owns", async () => {
+    const before = await getExampleData(testUserId);
     const response = await request(validTransfer);
     const body = await response.json();
 
@@ -46,10 +48,15 @@ describe("POST /api/transfer", () => {
       asset: "BTC",
       amount: "1.25 BTC",
       value: "—",
-      route: "Transfer test sender → Bitcoin",
+      route: "Bitcoin → Transfer test destination",
       status: "Pending approval",
     });
-    expect((await getExampleData(testUserId)).transactions).toContainEqual(body.data.transaction);
+    const after = await getExampleData(testUserId);
+    expect(after.transactions[0]).toEqual(body.data.transaction);
+    expect(after.assets).toEqual(before.assets);
+    const reload = await financialData(new Request(`http://localhost/api/users/${testUserId}/financial-data`), { params: Promise.resolve({ userId: testUserId }) });
+    expect(reload.status).toBe(200);
+    expect((await reload.json()).data.transactions[0]).toEqual(body.data.transaction);
   });
 
   it("rejects a source that is not an asset owned by that user", async () => {
@@ -67,5 +74,7 @@ describe("POST /api/transfer", () => {
 
     const malformed = await request({ ...validTransfer, assetAmount: "0" });
     expect(malformed.status).toBe(400);
+    expect((await request({ ...validTransfer, assetAmount: "1e3" })).status).toBe(400);
+    expect((await request({ ...validTransfer, senderName: " " })).status).toBe(400);
   });
 });

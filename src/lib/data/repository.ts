@@ -231,7 +231,7 @@ export async function createExampleTransfer(input: {
       return { ok: false, reason: "ASSET_TYPE_MISMATCH" };
     }
 
-    const position = database.prepare(`SELECT COALESCE(MAX(position), -1) + 1 AS position
+    const position = database.prepare(`SELECT COALESCE(MIN(position), 0) - 1 AS position
       FROM example_transactions WHERE user_id = ?`).get(input.userId) as { position: number };
     const transaction = {
       id: `TX-${randomUUID().toUpperCase()}`,
@@ -240,7 +240,7 @@ export async function createExampleTransfer(input: {
       asset: ownedAsset.symbol,
       amount: `${input.assetAmount} ${ownedAsset.symbol}`,
       value: "—",
-      route: `${input.senderName} → ${input.assetSource}`,
+      route: `${input.assetSource} → ${input.senderName}`,
       status: "Pending approval",
     };
     database.prepare(`INSERT INTO example_transactions
