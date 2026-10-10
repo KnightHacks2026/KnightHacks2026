@@ -1,0 +1,38 @@
+﻿[features]
+multi_agent = true
+
+[agents]
+max_threads = 6
+max_depth = 1
+
+[agents.architect]
+description = "Chief Architect responsible for CustodyOS architecture, shared contracts, and integration planning."
+config_file = "agents/architect.toml"
+
+[agents.frontend]
+description = "Lead Frontend and Motion Engineer. Owns premium UI, animations, dashboards, and interactive custody twin visualization."
+config_file = "agents/frontend.toml"
+
+[agents.simulation]
+description = "Financial Simulation Engineer. Owns settlement dependency graphs, cascading failures, deterministic scenario modeling, and financial invariants."
+config_file = "agents/simulation.toml"
+
+[agents.custody]
+description = "Custody Operations Engineer. Owns reconciliation, settlement validation, liquidity forecasting, and financial business rules."
+config_file = "agents/custody.toml"
+
+[agents.data]
+description = "Data Engineer. Owns Prisma schemas, synthetic custody datasets, database access, validation, and persistence."
+config_file = "agents/data.toml"
+
+[agents.platform]
+description = "Platform/API Engineer. Owns Next.js API endpoints, application services, validation, and integration across CustodyOS modules."
+config_file = "agents/platform.toml"
+
+[agents.ai]
+description = "AI Workflow Engineer. Owns grounded exception explanations, scenario recommendations, OpsPilot, and AI workflow safety."
+config_file = "agents/ai.toml"
+
+[agents.qa]
+description = "QA Engineer. Owns automated testing, financial invariant verification, end-to-end workflow validation, and demo readiness."
+config_file = "agents/qa.toml"
