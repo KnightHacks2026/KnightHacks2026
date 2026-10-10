@@ -5,6 +5,7 @@ import { exampleData, type ExampleData, type ExampleTransaction } from "@/contra
 import { TransferDialog } from "./transfer-dialog";
 import { PolicyReview } from "./policy-review";
 import { formatLedgerAmount } from "./ledger-amount";
+import { joinTwinTransfers, policyResultLabel, type TransferReviews, type TwinTransfer } from "./twin-transfers";
 
 type Page = "Overview" | "Digital Twin" | "Portfolios" | "Transactions" | "Policy Engine" | "Reporting";
 
@@ -34,6 +35,10 @@ const DEMO_USER_ID = "demo-user";
 
 type FinancialDataResponse =
   | { ok: true; data: ExampleData & { userId: string; datasets: unknown[] } }
+  | { ok: false; error: { message: string } };
+
+type ReviewsResponse =
+  | { ok: true; data: TransferReviews }
   | { ok: false; error: { message: string } };
 
 function parseUsdValue(value: string, description: string) {
@@ -151,17 +156,23 @@ function PageHeading({ eyebrow, title, description, actions }: { eyebrow: string
   );
 }
 
-function DigitalTwin({ data }: { data: ExampleData }) {
+function DigitalTwin({ data, reviews, refreshError }: { data: ExampleData; reviews: TransferReviews | null; refreshError: string }) {
   const [selected, setSelected] = useState("ACME BANK");
+  const [selectedTransferId, setSelectedTransferId] = useState("");
   const [dragging, setDragging] = useState<string | null>(null);
   const [viewport, setViewport] = useState({ x: 0, y: 0, width: 960, height: 550 });
   const [nodes, setNodes] = useState(() => structuredClone(data.nodes));
   const netAssetValue = sumAssetValues(data.assets);
   const edges = data.edges;
+  const transfers = useMemo(() => reviews ? joinTwinTransfers(data.transactions, reviews) : [], [data.transactions, reviews]);
+  const selectedTransfer = transfers.find(item => item.transaction.id === selectedTransferId);
   const nodeById = Object.fromEntries(nodes.map((node) => [node.id, node]));
 
   useEffect(() => {
-    setNodes(structuredClone(data.nodes));
+    setNodes(current => data.nodes.map(node => {
+      const dragged = current.find(item => item.id === node.id);
+      return dragged ? { ...node, x: dragged.x, y: dragged.y } : { ...node };
+    }));
   }, [data.nodes]);
 
   useEffect(() => {
@@ -214,7 +225,7 @@ function DigitalTwin({ data }: { data: ExampleData }) {
       />
       <div className="twin-layout">
         <section className="graph-shell">
-          <div className="graph-meta"><span>LIVE GRAPH</span><b>● {nodes.length} VISIBLE NODES</b><span>{edges.length} EDGES</span><span>UPDATED 2S AGO</span></div>
+          <div className="graph-meta"><span>DEMO TOPOLOGY</span><b>● {nodes.length} VISIBLE NODES</b><span>{edges.length} EDGES</span><span>PERSISTED REQUESTS IN INSPECTOR</span></div>
           <svg
             className={`network ${dragging ? "is-dragging" : ""}`}
             viewBox={`${viewport.x} ${viewport.y} ${viewport.width} ${viewport.height}`}
@@ -260,30 +271,48 @@ function DigitalTwin({ data }: { data: ExampleData }) {
           <div className="graph-controls">CLICK TO SELECT <span>·</span> DRAG NODES <span>·</span> SCROLL TO ZOOM</div>
           <button className="zoom-reset" onClick={resetZoom} aria-label="Reset graph zoom">{zoomPercent}% <span>RESET</span></button>
         </section>
-        <EntityInspector selected={selected} assets={data.assets} />
+        <EntityInspector selected={selected} assets={data.assets} transfers={transfers} selectedTransfer={selectedTransfer} onSelectTransfer={setSelectedTransferId} refreshError={refreshError} reviewsLoaded={reviews !== null} />
       </div>
     </main>
   );
 }
 
-function EntityInspector({ selected, assets }: { selected: string; assets: ExampleData["assets"] }) {
+function EntityInspector({ selected, assets, transfers, selectedTransfer, onSelectTransfer, refreshError, reviewsLoaded }: {
+  selected: string; assets: ExampleData["assets"]; transfers: TwinTransfer[]; selectedTransfer?: TwinTransfer;
+  onSelectTransfer: (id: string) => void; refreshError: string; reviewsLoaded: boolean;
+}) {
   const netAssetValue = sumAssetValues(assets);
   return (
     <aside className="inspector">
       <p className="eyebrow">SELECTED ENTITY</p>
       <h2>{selected}</h2>
-      <p className="inspector-sub">Institutional master entity · New York</p>
+      <p className="inspector-sub">Synthetic estate view · Edges are not transfer routes</p>
       <div className="inspector-value"><span>ASSETS UNDER CUSTODY</span><strong>{compactUsdFormatter.format(netAssetValue)}</strong></div>
-      <div className="split-stats"><div><span>CONNECTED WALLETS</span><strong>18</strong></div><div><span>ACTIVE POLICIES</span><strong>12</strong></div></div>
+      <div className="split-stats"><div><span>SAMPLE WALLETS</span><strong>18</strong></div><div><span>SAMPLE POLICIES</span><strong>12</strong></div></div>
       <div className="coverage">
-        <p className="eyebrow">CONTROL COVERAGE</p><div className="meter"><i /></div>
-        <div><span>95.2% verified</span><small>2 exceptions</small></div>
+        <p className="eyebrow">SAMPLE CONTROL COVERAGE</p><div className="meter"><i /></div>
+        <div><span>95.2% sample</span><small>2 sample exceptions</small></div>
       </div>
-      <div className="events">
-        <p className="eyebrow">RECENT GRAPH EVENTS</p>
-        <div><span>Policy quorum satisfied</span><time>12:42:08</time></div>
-        <div><span>Wallet 0x8F…A2 reconciled</span><time>12:41:51</time></div>
-        <div><span>BTC reserve attested</span><time>12:39:17</time></div>
+      <div className="twin-transfers">
+        <p className="eyebrow">TRANSFER ACTIVITY</p>
+        {refreshError && <p className="twin-refresh-error" role="status">{refreshError}</p>}
+        {!reviewsLoaded && !refreshError && <p className="twin-sample-note" role="status">Loading transfer reviews…</p>}
+        <div className="twin-transfer-list" aria-label="Transfer activity">
+          {transfers.map(item => <button type="button" key={item.transaction.id} aria-pressed={selectedTransfer?.transaction.id === item.transaction.id} onClick={() => onSelectTransfer(item.transaction.id)}>
+            <strong>{item.transaction.id}</strong><small>{item.kind === "request" ? "PERSISTED REQUEST" : "SYNTHETIC SAMPLE"}</small>
+            <span>{item.kind === "request" ? item.review.status : item.transaction.status}</span>
+          </button>)}
+        </div>
+        {selectedTransfer?.kind === "request" && <div className="twin-transfer-detail" aria-label="Selected transfer details">
+          <p className="eyebrow">REQUEST / {selectedTransfer.transaction.id}</p>
+          <strong>{selectedTransfer.review.amount} {selectedTransfer.review.asset}</strong>
+          <p>From {selectedTransfer.review.source} to {selectedTransfer.review.destination}</p>
+          <p>Status: {selectedTransfer.review.status}</p>
+          <p>{selectedTransfer.review.evaluation.scenario} · Institutional evidence is not verified.</p>
+          <ul>{selectedTransfer.review.evaluation.checks.map(check => <li key={check.id}><span>{check.label}</span><em className={`policy-result ${check.result.toLowerCase().replace(" ", "-")}`}>{policyResultLabel(check.result)}</em><small>{check.detail}</small></li>)}</ul>
+          {selectedTransfer.audit && <p className="twin-audit">{selectedTransfer.audit.decision === "approve" ? "Approved for processing" : "Rejected"} · {new Date(selectedTransfer.audit.occurredAt).toLocaleString()}<br />Reason: {selectedTransfer.audit.reason || "No reason supplied"}</p>}
+        </div>}
+        {selectedTransfer?.kind === "sample" && <p className="twin-sample-note">Synthetic sample transaction. No persisted transfer review or policy evaluation is available.</p>}
       </div>
       <button className="button primary inspector-button">Inspect entity <Icon name="arrow" size={14} /></button>
       <p className="entity-id">ENTITY ID · ENT-001-NY</p>
@@ -527,6 +556,10 @@ export default function App() {
   const [financialData, setFinancialData] = useState<ExampleData>(exampleData);
   const [financialDataLoaded, setFinancialDataLoaded] = useState(false);
   const [financialDataError, setFinancialDataError] = useState("");
+  const [reviews, setReviews] = useState<TransferReviews | null>(null);
+  const [twinRefreshError, setTwinRefreshError] = useState("");
+  const refreshController = useRef<AbortController | null>(null);
+  const refreshSequence = useRef(0);
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferNotice, setTransferNotice] = useState("");
   const closeTransfer = useCallback(() => setTransferOpen(false), []);
@@ -542,40 +575,60 @@ export default function App() {
       transaction.id === id ? { ...transaction, status } : transaction) }));
   }, []);
 
-  useEffect(() => {
+  const refresh = useCallback(async (withReviews: boolean, force = false) => {
+    if (refreshController.current && !force) return;
+    refreshController.current?.abort();
     const controller = new AbortController();
-    fetch(`/api/users/${encodeURIComponent(DEMO_USER_ID)}/financial-data`, { signal: controller.signal, cache: "no-store" })
-      .then(async response => {
-        const body = await response.json() as FinancialDataResponse;
-        if (!response.ok || !body.ok) {
-          throw new Error(body.ok ? `Financial data request failed with status ${response.status}.` : body.error.message);
-        }
-        if (body.data.userId !== DEMO_USER_ID
-          || !Array.isArray(body.data.assets)
-          || !Array.isArray(body.data.transactions)
-          || !Array.isArray(body.data.policies)
-          || !Array.isArray(body.data.nodes)
-          || !Array.isArray(body.data.edges)) {
-          throw new Error("Financial data endpoint returned an invalid response.");
-        }
-        setFinancialData({
-          assets: body.data.assets,
-          transactions: body.data.transactions,
-          policies: body.data.policies,
-          nodes: body.data.nodes,
-          edges: body.data.edges,
-        });
-        setFinancialDataLoaded(true);
-        setFinancialDataError("");
-      })
-      .catch(error => {
-        if (!controller.signal.aborted) {
-          console.error("Unable to load demo financial data.", error);
-          setFinancialDataError("Unable to load the demo inventory. Transfer requests are unavailable until data loads.");
-        }
-      });
-    return () => controller.abort();
+    refreshController.current = controller;
+    const sequence = ++refreshSequence.current;
+    try {
+      const [financialResponse, reviewsResponse] = await Promise.all([
+        fetch(`/api/users/${encodeURIComponent(DEMO_USER_ID)}/financial-data`, { signal: controller.signal, cache: "no-store" }),
+        withReviews ? fetch("/api/transfer/reviews", { signal: controller.signal, cache: "no-store" }) : Promise.resolve(null),
+      ]);
+      const body = await financialResponse.json() as FinancialDataResponse;
+      if (!financialResponse.ok || !body.ok) throw new Error(body.ok ? `Financial data request failed with status ${financialResponse.status}.` : body.error.message);
+      if (body.data.userId !== DEMO_USER_ID || !Array.isArray(body.data.assets) || !Array.isArray(body.data.transactions)
+        || !Array.isArray(body.data.policies) || !Array.isArray(body.data.nodes) || !Array.isArray(body.data.edges)) {
+        throw new Error("Financial data endpoint returned an invalid response.");
+      }
+      let nextReviews: TransferReviews | null = null;
+      if (reviewsResponse) {
+        const reviewBody = await reviewsResponse.json() as ReviewsResponse;
+        if (!reviewsResponse.ok || !reviewBody.ok) throw new Error(reviewBody.ok ? "Unable to load transfer reviews." : reviewBody.error.message);
+        if (!Array.isArray(reviewBody.data.transfers) || !Array.isArray(reviewBody.data.audit)) throw new Error("Review endpoint returned an invalid response.");
+        nextReviews = reviewBody.data;
+      }
+      if (controller.signal.aborted || sequence !== refreshSequence.current) return;
+      setFinancialData({ assets: body.data.assets, transactions: body.data.transactions, policies: body.data.policies,
+        nodes: body.data.nodes, edges: body.data.edges });
+      if (nextReviews) setReviews(nextReviews);
+      setFinancialDataLoaded(true);
+      setFinancialDataError("");
+      if (withReviews) setTwinRefreshError("");
+    } catch (error) {
+      if (controller.signal.aborted || sequence !== refreshSequence.current) return;
+      console.error("Unable to refresh demo financial data.", error);
+      if (withReviews) setTwinRefreshError("Unable to refresh requests. Showing last loaded data.");
+      else setFinancialDataError("Unable to load the demo inventory. Transfer requests are unavailable until data loads.");
+    } finally {
+      if (refreshController.current === controller) refreshController.current = null;
+    }
   }, []);
+
+  useEffect(() => {
+    void refresh(false, true);
+    return () => refreshController.current?.abort();
+  }, [refresh]);
+
+  useEffect(() => {
+    if (page !== "Digital Twin") return;
+    void refresh(true, true);
+    const onFocus = () => { void refresh(true); };
+    window.addEventListener("focus", onFocus);
+    const timer = window.setInterval(() => { if (!document.hidden) void refresh(true); }, 15_000);
+    return () => { window.removeEventListener("focus", onFocus); window.clearInterval(timer); refreshController.current?.abort(); };
+  }, [page, refresh]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -596,7 +649,7 @@ export default function App() {
   }, [commandOpen]);
   const pages: Record<Page, React.ReactNode> = {
     "Overview": <Overview data={financialData} onNewTransfer={openTransfer} />,
-    "Digital Twin": <DigitalTwin data={financialData} />,
+    "Digital Twin": <DigitalTwin data={financialData} reviews={reviews} refreshError={twinRefreshError} />,
     "Portfolios": <Portfolios data={financialData} />,
     "Transactions": <Transactions data={financialData} onNewTransfer={openTransfer} notice={transferNotice} />,
     "Policy Engine": <PolicyEngine data={financialData} onDecision={onPolicyDecision} />,
