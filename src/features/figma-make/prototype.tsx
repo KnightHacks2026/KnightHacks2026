@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { exampleData, type ExampleData } from "@/contracts";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { exampleData, type ExampleData, type ExampleTransaction } from "@/contracts";
+import { TransferDialog } from "./transfer-dialog";
+import { formatLedgerAmount } from "./ledger-amount";
 
 type Page = "Overview" | "Digital Twin" | "Portfolios" | "Transactions" | "Policy Engine" | "Reporting";
 
@@ -288,7 +290,7 @@ function EntityInspector({ selected, assets }: { selected: string; assets: Examp
   );
 }
 
-function Overview({ data }: { data: ExampleData }) {
+function Overview({ data, onNewTransfer }: { data: ExampleData; onNewTransfer: () => void }) {
   const { assets, transactions } = data;
   const netAssetValue = sumAssetValues(assets);
   const attentionTransactions = transactions.filter(transaction => transaction.status !== "Completed");
@@ -304,7 +306,7 @@ function Overview({ data }: { data: ExampleData }) {
   });
   return (
     <main className="page">
-      <PageHeading eyebrow="COMMAND CENTER / 10 OCT 2025" title="Operational Overview" description="Estate health, treasury posture, and high-priority actions across the global custody network." actions={<button className="button primary">New transfer</button>} />
+      <PageHeading eyebrow="COMMAND CENTER / 10 OCT 2025" title="Operational Overview" description="Estate health, treasury posture, and high-priority actions across the global custody network." actions={<button className="button primary" onClick={onNewTransfer}>New transfer</button>} />
       <div className="overview-grid">
         <section className="exposure-panel">
           <div className="panel-top"><p className="eyebrow">ASSETS UNDER CUSTODY</p><span className="positive">+2.4% MTD</span></div>
@@ -400,7 +402,7 @@ function Portfolios({ data }: { data: ExampleData }) {
   );
 }
 
-function Transactions({ data }: { data: ExampleData }) {
+function Transactions({ data, onNewTransfer, notice }: { data: ExampleData; onNewTransfer: () => void; notice: string }) {
   const { assets } = data;
   const maxAssetShare = Math.max(0, ...assets.map((asset) => asset.share));
   const transactionValue = sumTransactionValues(data.transactions);
@@ -408,7 +410,8 @@ function Transactions({ data }: { data: ExampleData }) {
   const displayed = useMemo(() => filter === "All activity" ? data.transactions : data.transactions.filter(t => t.status === filter), [filter, data.transactions]);
   return (
     <main className="page transactions-page">
-      <PageHeading eyebrow="TRANSACTIONS / LIVE LEDGER" title="Transaction Monitor" description="Authorization, compliance screening, and settlement state across every asset movement." actions={<button className="button primary">Initiate transfer</button>} />
+      <PageHeading eyebrow="TRANSACTIONS / LIVE LEDGER" title="Transaction Monitor" description="Authorization, compliance screening, and settlement state across every asset movement." actions={<button className="button primary" onClick={onNewTransfer}>Initiate transfer</button>} />
+      {notice && <p className="transfer-notice" role="status">{notice}</p>}
       <div className="transaction-toolbar">
         <div>{["All activity", "Pending approval", "Screening", "Completed"].map(x => <button key={x} className={filter === x ? "active" : ""} onClick={() => setFilter(x)}>{x}</button>)}</div>
         <button className="filter-control">All loaded transactions ⌄</button>
@@ -416,7 +419,7 @@ function Transactions({ data }: { data: ExampleData }) {
       <section className="transaction-ledger">
         <div className="tx-head"><span>TIME / ID</span><span>TYPE</span><span>ASSET / AMOUNT</span><span>ROUTE</span><span>VALUE</span><span>STATUS</span></div>
         {displayed.map(tx => <button className="tx-row" key={tx.id}>
-          <span><time>{tx.time}</time><small>{tx.id}</small></span><span>{tx.type}</span><span><b>{tx.asset}</b> {tx.amount}</span><span>{tx.route}</span><strong>{tx.value}</strong><span className={`tx-status ${tx.status.toLowerCase().replace(" ", "-")}`}>{tx.status}</span>
+          <span><time>{tx.time}</time><small>{tx.id}</small></span><span>{tx.type}</span><span><b>{tx.asset}</b> {formatLedgerAmount(tx.amount, tx.asset)}</span><span>{tx.route}</span><strong>{tx.value}</strong><span className={`tx-status ${tx.status.toLowerCase().replace(" ", "-")}`}>{tx.status}</span>
         </button>)}
       </section>
       <section className="transaction-volume">
@@ -520,6 +523,18 @@ export default function App() {
   const [page, setPage] = useState<Page>("Overview");
   const [commandOpen, setCommandOpen] = useState(false);
   const [financialData, setFinancialData] = useState<ExampleData>(exampleData);
+  const [financialDataLoaded, setFinancialDataLoaded] = useState(false);
+  const [financialDataError, setFinancialDataError] = useState("");
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferNotice, setTransferNotice] = useState("");
+  const closeTransfer = useCallback(() => setTransferOpen(false), []);
+  const openTransfer = useCallback(() => { setTransferNotice(""); setTransferOpen(true); }, []);
+  const onTransferCreated = useCallback((transaction: ExampleTransaction) => {
+    setFinancialData(current => ({ ...current, transactions: [transaction, ...current.transactions] }));
+    setTransferNotice(`Transfer request ${transaction.id} recorded. Status: ${transaction.status}. No assets have moved.`);
+    setPage("Transactions");
+    setTransferOpen(false);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -544,9 +559,14 @@ export default function App() {
           nodes: body.data.nodes,
           edges: body.data.edges,
         });
+        setFinancialDataLoaded(true);
+        setFinancialDataError("");
       })
       .catch(error => {
-        if (!controller.signal.aborted) console.error("Unable to load demo financial data.", error);
+        if (!controller.signal.aborted) {
+          console.error("Unable to load demo financial data.", error);
+          setFinancialDataError("Unable to load the demo inventory. Transfer requests are unavailable until data loads.");
+        }
       });
     return () => controller.abort();
   }, []);
@@ -569,10 +589,10 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [commandOpen]);
   const pages: Record<Page, React.ReactNode> = {
-    "Overview": <Overview data={financialData} />,
+    "Overview": <Overview data={financialData} onNewTransfer={openTransfer} />,
     "Digital Twin": <DigitalTwin data={financialData} />,
     "Portfolios": <Portfolios data={financialData} />,
-    "Transactions": <Transactions data={financialData} />,
+    "Transactions": <Transactions data={financialData} onNewTransfer={openTransfer} notice={transferNotice} />,
     "Policy Engine": <PolicyEngine data={financialData} />,
     "Reporting": <Reporting />,
   };
@@ -580,9 +600,13 @@ export default function App() {
     <div className="app-shell make-prototype" data-data-source="figma-demo-sample">
       <Rail page={page} setPage={setPage} />
       <Header page={page} setPage={setPage} openCommand={() => setCommandOpen(true)} />
+      {financialDataError && <p className="transfer-load-error" role="alert">{financialDataError}</p>}
       {pages[page]}
       <footer className="statusbar"><span>NETWORK <b>MAINNET</b></span><span>LAST FINALITY <b>3.2 SEC</b></span><span>POLICY ENGINE <b className="positive">OPERATIONAL</b></span><time>UTC 16:42:09</time></footer>
       {commandOpen && <CommandPalette close={() => setCommandOpen(false)} setPage={setPage} />}
+      {transferOpen && (financialDataLoaded
+        ? <TransferDialog assets={financialData.assets} onClose={closeTransfer} onCreated={onTransferCreated} />
+        : <div className="transfer-overlay" onMouseDown={closeTransfer}><section className="transfer-dialog" role="dialog" aria-modal="true" aria-label="New transfer" onMouseDown={event => event.stopPropagation()}><p role="status">{financialDataError || "Loading demo inventory…"}</p><button type="button" className="button secondary" onClick={closeTransfer}>Close</button></section></div>)}
     </div>
   );
 }
