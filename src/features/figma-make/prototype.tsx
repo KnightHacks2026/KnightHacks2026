@@ -33,6 +33,36 @@ type FinancialDataResponse =
   | { ok: true; data: ExampleData & { userId: string; datasets: unknown[] } }
   | { ok: false; error: { message: string } };
 
+function parseUsdValue(value: string, description: string) {
+  const match = value.match(/^\s*\$?([\d,]+(?:\.\d+)?)\s*([KMBT]?)\s*$/i);
+  if (!match) {
+    throw new Error(`${description} has an unsupported USD value: ${value}`);
+  }
+
+  const amount = Number(match[1].replaceAll(",", ""));
+  const multiplier = { "": 1, K: 1e3, M: 1e6, B: 1e9, T: 1e12 }[match[2].toUpperCase()];
+  if (!Number.isFinite(amount) || multiplier === undefined) {
+    throw new Error(`${description} has an invalid USD value: ${value}`);
+  }
+
+  return amount * multiplier;
+}
+
+function sumAssetValues(assets: ExampleData["assets"]) {
+  return assets.reduce((total, asset) => total + parseUsdValue(asset.value, `Asset ${asset.symbol}`), 0);
+}
+
+function sumTransactionValues(transactions: ExampleData["transactions"]) {
+  return transactions.reduce((total, transaction) => total + parseUsdValue(transaction.value, `Transaction ${transaction.id}`), 0);
+}
+
+const compactUsdFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  notation: "compact",
+  maximumFractionDigits: 2,
+});
+
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
     overview: <><circle cx="12" cy="12" r="8" /><path d="M4 12h16M12 4v16" /></>,
@@ -121,6 +151,7 @@ function DigitalTwin({ data }: { data: ExampleData }) {
   const [dragging, setDragging] = useState<string | null>(null);
   const [viewport, setViewport] = useState({ x: 0, y: 0, width: 960, height: 550 });
   const [nodes, setNodes] = useState(() => structuredClone(data.nodes));
+  const netAssetValue = sumAssetValues(data.assets);
   const edges = data.edges;
   const nodeById = Object.fromEntries(nodes.map((node) => [node.id, node]));
 
@@ -178,7 +209,7 @@ function DigitalTwin({ data }: { data: ExampleData }) {
       />
       <div className="twin-layout">
         <section className="graph-shell">
-          <div className="graph-meta"><span>LIVE GRAPH</span><b>● 8 VISIBLE NODES</b><span>9 EDGES</span><span>UPDATED 2S AGO</span></div>
+          <div className="graph-meta"><span>LIVE GRAPH</span><b>● {nodes.length} VISIBLE NODES</b><span>{edges.length} EDGES</span><span>UPDATED 2S AGO</span></div>
           <svg
             className={`network ${dragging ? "is-dragging" : ""}`}
             viewBox={`${viewport.x} ${viewport.y} ${viewport.width} ${viewport.height}`}
@@ -215,26 +246,29 @@ function DigitalTwin({ data }: { data: ExampleData }) {
                 <circle className="node-core" r={n.r} />
                 {n.type === "master" && <text className="node-kicker" y="-13">MASTER ENTITY</text>}
                 <text className={n.type === "master" ? "master-label" : ""} y={n.type === "master" ? 8 : -2}>{n.id}</text>
-                <text className={n.type === "master" ? "node-value" : "node-sub"} y={n.type === "master" ? 27 : 15}>{n.sub}</text>
+                <text className={n.type === "master" ? "node-value" : "node-sub"} y={n.type === "master" ? 27 : 15}>
+                  {n.type === "master" ? `${compactUsdFormatter.format(netAssetValue)} AUC` : n.sub}
+                </text>
               </g>
             ))}
           </svg>
           <div className="graph-controls">CLICK TO SELECT <span>·</span> DRAG NODES <span>·</span> SCROLL TO ZOOM</div>
           <button className="zoom-reset" onClick={resetZoom} aria-label="Reset graph zoom">{zoomPercent}% <span>RESET</span></button>
         </section>
-        <EntityInspector selected={selected} />
+        <EntityInspector selected={selected} assets={data.assets} />
       </div>
     </main>
   );
 }
 
-function EntityInspector({ selected }: { selected: string }) {
+function EntityInspector({ selected, assets }: { selected: string; assets: ExampleData["assets"] }) {
+  const netAssetValue = sumAssetValues(assets);
   return (
     <aside className="inspector">
       <p className="eyebrow">SELECTED ENTITY</p>
       <h2>{selected}</h2>
       <p className="inspector-sub">Institutional master entity · New York</p>
-      <div className="inspector-value"><span>ASSETS UNDER CUSTODY</span><strong>$8.42B</strong></div>
+      <div className="inspector-value"><span>ASSETS UNDER CUSTODY</span><strong>{compactUsdFormatter.format(netAssetValue)}</strong></div>
       <div className="split-stats"><div><span>CONNECTED WALLETS</span><strong>18</strong></div><div><span>ACTIVE POLICIES</span><strong>12</strong></div></div>
       <div className="coverage">
         <p className="eyebrow">CONTROL COVERAGE</p><div className="meter"><i /></div>
@@ -254,6 +288,8 @@ function EntityInspector({ selected }: { selected: string }) {
 
 function Overview({ data }: { data: ExampleData }) {
   const { assets, transactions } = data;
+  const netAssetValue = sumAssetValues(assets);
+  const attentionTransactions = transactions.filter(transaction => transaction.status !== "Completed");
   const bars = [38, 48, 45, 58, 56, 63, 72, 68, 78, 74, 82, 88, 84, 93, 90, 98, 94, 104, 112, 108, 118, 124, 121, 132];
   const [activeChartPoint, setActiveChartPoint] = useState<number | null>(null);
   const chartPoints = bars.map((height, index) => {
@@ -270,7 +306,7 @@ function Overview({ data }: { data: ExampleData }) {
       <div className="overview-grid">
         <section className="exposure-panel">
           <div className="panel-top"><p className="eyebrow">ASSETS UNDER CUSTODY</p><span className="positive">+2.4% MTD</span></div>
-          <div className="hero-number">$8.42<span>B</span></div>
+          <div className="hero-number">{compactUsdFormatter.format(netAssetValue)}</div>
           <div className="chart">
             {chartPoints.map((point, i) => (
               <i
@@ -291,13 +327,14 @@ function Overview({ data }: { data: ExampleData }) {
           <div className="chart-axis"><span>09 SEP</span><span>18 SEP</span><span>27 SEP</span><span>10 OCT</span></div>
         </section>
         <section className="action-ledger">
-          <div className="panel-top"><p className="eyebrow">REQUIRES ATTENTION</p><span>04 OPEN</span></div>
-          {[
-            ["01", "Withdrawal approval", "$8.71M BTC transfer requires 2 signatures", "08:42"],
-            ["02", "Control exception", "Counterparty allowlist coverage below threshold", "1h"],
-            ["03", "Reconciliation break", "SOL sub-ledger mismatch · 0.0038%", "3h"],
-            ["04", "Attestation due", "ETH reserve proof expires tomorrow", "1d"],
-          ].map((row) => <button className="action-row" key={row[0]}><b>{row[0]}</b><span><strong>{row[1]}</strong><small>{row[2]}</small></span><time>{row[3]}</time><Icon name="arrow" size={14} /></button>)}
+          <div className="panel-top"><p className="eyebrow">REQUIRES ATTENTION</p><span>{String(attentionTransactions.length).padStart(2, "0")} OPEN</span></div>
+          {attentionTransactions.map((transaction, index) => (
+            <button className="action-row" key={transaction.id}>
+              <b>{String(index + 1).padStart(2, "0")}</b>
+              <span><strong>{transaction.type} · {transaction.status}</strong><small>{transaction.asset} · {transaction.amount}</small></span>
+              <time>{transaction.time}</time><Icon name="arrow" size={14} />
+            </button>
+          ))}
         </section>
         <section className="asset-ribbon">
           <p className="eyebrow">ASSET COMPOSITION</p>
@@ -315,6 +352,7 @@ function Overview({ data }: { data: ExampleData }) {
 
 function Portfolios({ data }: { data: ExampleData }) {
   const { assets } = data;
+  const netAssetValue = sumAssetValues(assets);
   const [active, setActive] = useState("Consolidated");
   return (
     <main className="page">
@@ -323,7 +361,7 @@ function Portfolios({ data }: { data: ExampleData }) {
       <section className="portfolio-ledger">
         <div className="portfolio-overview">
           <div className="portfolio-summary">
-            <div><span>NET ASSET VALUE</span><strong>$8,419,628,401</strong></div>
+            <div><span>NET ASSET VALUE</span><strong>{compactUsdFormatter.format(netAssetValue)}</strong></div>
             <div><span>24H MOVEMENT</span><strong className="positive">+$116.24M</strong></div>
             <div><span>AVAILABLE LIQUIDITY</span><strong>$1.84B</strong></div>
             <div><span>NETWORKS</span><strong>14</strong></div>
@@ -361,6 +399,9 @@ function Portfolios({ data }: { data: ExampleData }) {
 }
 
 function Transactions({ data }: { data: ExampleData }) {
+  const { assets } = data;
+  const maxAssetShare = Math.max(0, ...assets.map((asset) => asset.share));
+  const transactionValue = sumTransactionValues(data.transactions);
   const [filter, setFilter] = useState("All activity");
   const displayed = useMemo(() => filter === "All activity" ? data.transactions : data.transactions.filter(t => t.status === filter), [filter, data.transactions]);
   return (
@@ -368,7 +409,7 @@ function Transactions({ data }: { data: ExampleData }) {
       <PageHeading eyebrow="TRANSACTIONS / LIVE LEDGER" title="Transaction Monitor" description="Authorization, compliance screening, and settlement state across every asset movement." actions={<button className="button primary">Initiate transfer</button>} />
       <div className="transaction-toolbar">
         <div>{["All activity", "Pending approval", "Screening", "Completed"].map(x => <button key={x} className={filter === x ? "active" : ""} onClick={() => setFilter(x)}>{x}</button>)}</div>
-        <button className="filter-control">Last 24 hours ⌄</button>
+        <button className="filter-control">All loaded transactions ⌄</button>
       </div>
       <section className="transaction-ledger">
         <div className="tx-head"><span>TIME / ID</span><span>TYPE</span><span>ASSET / AMOUNT</span><span>ROUTE</span><span>VALUE</span><span>STATUS</span></div>
@@ -378,21 +419,15 @@ function Transactions({ data }: { data: ExampleData }) {
       </section>
       <section className="transaction-volume">
         <div className="volume-heading">
-          <div><p className="eyebrow">24H TRANSACTION VOLUME</p><strong>$428.6M</strong><span>1,284 settled movements</span></div>
+          <div><p className="eyebrow">LOADED TRANSACTION VALUE</p><strong>{compactUsdFormatter.format(transactionValue)}</strong><span>{data.transactions.length} loaded transactions</span></div>
           <div><span>FINALITY RATE</span><strong>99.998%</strong><small>Median 3.2 sec</small></div>
         </div>
-        <div className="volume-chart" aria-label="Transaction volume by asset">
-          {[
-            { asset: "BTC", value: "$148.2M", height: 86 },
-            { asset: "ETH", value: "$112.7M", height: 66 },
-            { asset: "USDC", value: "$91.4M", height: 53 },
-            { asset: "SOL", value: "$48.8M", height: 29 },
-            { asset: "OTHER", value: "$27.5M", height: 16 },
-          ].map((item) => (
-            <div className="volume-column" key={item.asset}>
-              <span>{item.value}</span>
-              <div><i style={{ height: `${item.height}%` }} /></div>
-              <strong>{item.asset}</strong>
+        <div className="volume-chart" aria-label="Asset market value by asset">
+          {assets.map((asset) => (
+            <div className="volume-column" key={asset.symbol}>
+              <span>{asset.value}</span>
+              <div><i style={{ height: `${maxAssetShare ? (asset.share / maxAssetShare) * 86 : 0}%` }} /></div>
+              <strong>{asset.symbol}</strong>
             </div>
           ))}
         </div>
@@ -410,7 +445,7 @@ function PolicyEngine({ data }: { data: ExampleData }) {
       <PageHeading eyebrow="CONTROL PLANE / POLICY ENGINE" title="Programmable Governance" description="Authorization logic mapped directly to entities, wallets, transaction types, and risk limits." actions={<button className="button primary">Create policy</button>} />
       <div className="policy-workbench">
         <section className="policy-list">
-          <div className="policy-list-title"><p className="eyebrow">POLICY LIBRARY</p><span>4 SAMPLE POLICIES</span></div>
+          <div className="policy-list-title"><p className="eyebrow">POLICY LIBRARY</p><span>{policies.length} SAMPLE POLICIES</span></div>
           {policies.map((policy, i) => <button onClick={() => setSelected(i)} className={selectedPolicyIndex === i ? "active" : ""} key={policy.name}><span><strong>{policy.name}</strong><small>{policy.scope}</small></span><em>{policy.state}</em></button>)}
         </section>
         <section className="policy-canvas">
