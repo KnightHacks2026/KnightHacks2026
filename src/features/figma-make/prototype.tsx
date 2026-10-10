@@ -53,7 +53,9 @@ function sumAssetValues(assets: ExampleData["assets"]) {
 }
 
 function sumTransactionValues(transactions: ExampleData["transactions"]) {
-  return transactions.reduce((total, transaction) => total + parseUsdValue(transaction.value, `Transaction ${transaction.id}`), 0);
+  return transactions.reduce((total, transaction) => transaction.value === "—"
+    ? total
+    : total + parseUsdValue(transaction.value, `Transaction ${transaction.id}`), 0);
 }
 
 const compactUsdFormatter = new Intl.NumberFormat("en-US", {

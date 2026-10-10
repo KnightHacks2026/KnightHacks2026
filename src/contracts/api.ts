@@ -19,6 +19,7 @@ import type {
   SourceRecord,
 } from "./entities";
 import type { AppliedCorrection, AuditEvent, CorrectionProposal } from "./corrections";
+import type { ExampleTransaction } from "./example-data";
 import type {
   Explanation,
   Intervention,
@@ -192,4 +193,16 @@ export interface GetAuditEventsRequest extends DatasetRequest {
 export type GetAuditEventsResponse = ApiResponse<{
   events: AuditEvent[];
   nextCursor?: string;
+}>;
+
+export interface CreateTransferRequest extends VersionedRequest {
+  userId: EntityId;
+  assetType: string;
+  assetAmount: string;
+  assetSource: string;
+  senderName: string;
+}
+
+export type CreateTransferResponse = ApiResponse<{
+  transaction: ExampleTransaction;
 }>;

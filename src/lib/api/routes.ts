@@ -1,6 +1,8 @@
 import type {
   ApplyApprovedCorrectionRequest,
   ApplyApprovedCorrectionResponse,
+  CreateTransferRequest,
+  CreateTransferResponse,
   CreateCorrectionProposalRequest,
   CreateCorrectionProposalResponse,
   DecideCorrectionProposalRequest,
@@ -33,6 +35,7 @@ export interface ApiOperations {
   decideCorrectionProposal: { request: DecideCorrectionProposalRequest; response: DecideCorrectionProposalResponse };
   applyApprovedCorrection: { request: ApplyApprovedCorrectionRequest; response: ApplyApprovedCorrectionResponse };
   getAuditEvents: { request: GetAuditEventsRequest; response: GetAuditEventsResponse };
+  createTransfer: { request: CreateTransferRequest; response: CreateTransferResponse };
 }
 
 export const apiPaths = {
@@ -48,4 +51,5 @@ export const apiPaths = {
   applyApprovedCorrection: (datasetId: string, proposalId: string) =>
     `/api/datasets/${encodeURIComponent(datasetId)}/correction-proposals/${encodeURIComponent(proposalId)}/apply`,
   getAuditEvents: (datasetId: string) => `/api/datasets/${encodeURIComponent(datasetId)}/audit-events`,
+  createTransfer: "/api/transfer",
 } as const;
