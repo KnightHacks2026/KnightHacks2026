@@ -4,6 +4,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { CONTRACT_VERSION, exampleData, type AuditEvent, type Dataset, type DecimalInteger, type ExampleData, type FinancialSnapshot, type ImportDatasetRequest, type ImportDatasetResponse, type SourceRecord } from "@/contracts";
 import { cascadeImport } from "@/contracts/fixtures";
+import { evaluateTransfer, type ReviewTransfer, type PolicyEvaluation } from "@/lib/policy/evaluation";
 
 let databasePromise: Promise<DatabaseSync> | undefined;
 
@@ -99,6 +100,23 @@ const schema = `
     type TEXT NOT NULL, asset TEXT NOT NULL, amount TEXT NOT NULL, value TEXT NOT NULL,
     route TEXT NOT NULL, status TEXT NOT NULL, PRIMARY KEY(user_id, id), UNIQUE(user_id, position)
   );
+  CREATE TABLE IF NOT EXISTS example_transfer_requests (
+    user_id TEXT NOT NULL, transaction_id TEXT NOT NULL, asset TEXT NOT NULL, amount TEXT NOT NULL,
+    source TEXT NOT NULL, destination TEXT NOT NULL, created_at TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('Pending approval', 'Approved for processing', 'Rejected')),
+    revision INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY(user_id, transaction_id)
+  );
+  CREATE TABLE IF NOT EXISTS example_transfer_audit (
+    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, transaction_id TEXT NOT NULL,
+    occurred_at TEXT NOT NULL, decision TEXT NOT NULL CHECK(decision IN ('approve', 'reject')),
+    reviewer_id TEXT NOT NULL, reason TEXT NOT NULL, evaluation_json TEXT NOT NULL,
+    revision_before INTEGER NOT NULL, revision_after INTEGER NOT NULL
+  );
+  CREATE TRIGGER IF NOT EXISTS example_transfer_audit_no_update BEFORE UPDATE ON example_transfer_audit
+    BEGIN SELECT RAISE(ABORT, 'transfer audit is append-only'); END;
+  CREATE TRIGGER IF NOT EXISTS example_transfer_audit_no_delete BEFORE DELETE ON example_transfer_audit
+    BEGIN SELECT RAISE(ABORT, 'transfer audit is append-only'); END;
   CREATE TABLE IF NOT EXISTS example_policies (
     user_id TEXT NOT NULL, position INTEGER NOT NULL, name TEXT NOT NULL, scope TEXT NOT NULL,
     rule TEXT NOT NULL, state TEXT NOT NULL, coverage REAL NOT NULL,
@@ -249,8 +267,104 @@ export async function createExampleTransfer(input: {
       input.userId, position.position, transaction.id, transaction.time, transaction.type, transaction.asset,
       transaction.amount, transaction.value, transaction.route, transaction.status,
     );
+    database.prepare(`INSERT INTO example_transfer_requests
+      (user_id, transaction_id, asset, amount, source, destination, created_at, status, revision)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending approval', 1)`).run(
+      input.userId, transaction.id, ownedAsset.symbol, input.assetAmount, input.assetSource,
+      input.senderName, new Date().toISOString(),
+    );
     database.exec("COMMIT");
     return { ok: true, transaction };
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export interface TransferAuditRecord {
+  id: string;
+  transactionId: string;
+  occurredAt: string;
+  decision: "approve" | "reject";
+  reviewerId: string;
+  reason: string;
+  evaluation: PolicyEvaluation;
+  revisionBefore: number;
+  revisionAfter: number;
+}
+
+function reviewRow(row: Record<string, unknown>): ReviewTransfer {
+  return {
+    id: String(row.transaction_id), userId: String(row.user_id), asset: String(row.asset),
+    amount: String(row.amount), source: String(row.source), destination: String(row.destination),
+    createdAt: String(row.created_at), status: String(row.status) as ReviewTransfer["status"],
+    revision: Number(row.revision),
+  };
+}
+
+function sourceOwned(database: DatabaseSync, transfer: ReviewTransfer): boolean {
+  return Boolean(database.prepare("SELECT 1 FROM example_assets WHERE user_id = ? AND symbol = ?")
+    .get(transfer.userId, transfer.asset));
+}
+
+export async function getTransferReviews(userId = demoUserId()) {
+  const database = await getDatabase();
+  const transfers = database.prepare(`SELECT r.* FROM example_transfer_requests r
+    JOIN example_transactions t ON t.user_id = r.user_id AND t.id = r.transaction_id AND t.status = r.status
+    WHERE r.user_id = ? ORDER BY r.created_at DESC, r.rowid DESC`).all(userId).map(row => reviewRow(row));
+  const audit = database.prepare(`SELECT * FROM example_transfer_audit WHERE user_id = ?
+    ORDER BY occurred_at DESC, rowid DESC`).all(userId).map(row => ({
+    id: String(row.id), transactionId: String(row.transaction_id), occurredAt: String(row.occurred_at),
+    decision: String(row.decision) as TransferAuditRecord["decision"], reviewerId: String(row.reviewer_id),
+    reason: String(row.reason), evaluation: JSON.parse(String(row.evaluation_json)) as PolicyEvaluation,
+    revisionBefore: Number(row.revision_before), revisionAfter: Number(row.revision_after),
+  }));
+  return { transfers: transfers.map(transfer => ({ ...transfer, evaluation: evaluateTransfer(transfer, sourceOwned(database, transfer)) })), audit };
+}
+
+export async function decideTransfer(input: {
+  userId: string; transactionId: string; expectedRevision: number;
+  decision: "approve" | "reject"; reason: string;
+}): Promise<{ ok: true; transfer: ReviewTransfer; audit: TransferAuditRecord } |
+  { ok: false; reason: "NOT_FOUND" | "CONFLICT" | "EVIDENCE_REQUIRED" }> {
+  const database = await getDatabase();
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const row = database.prepare(`SELECT r.* FROM example_transfer_requests r
+      JOIN example_transactions t ON t.user_id = r.user_id AND t.id = r.transaction_id AND t.status = r.status
+      WHERE r.user_id = ? AND r.transaction_id = ?`)
+      .get(input.userId, input.transactionId);
+    if (!row) { database.exec("ROLLBACK"); return { ok: false, reason: "NOT_FOUND" }; }
+    const transfer = reviewRow(row);
+    if (transfer.status !== "Pending approval" || transfer.revision !== input.expectedRevision) {
+      database.exec("ROLLBACK"); return { ok: false, reason: "CONFLICT" };
+    }
+    const evaluation = evaluateTransfer(transfer, sourceOwned(database, transfer));
+    if (input.decision === "approve" && !evaluation.canApprove) {
+      database.exec("ROLLBACK"); return { ok: false, reason: "EVIDENCE_REQUIRED" };
+    }
+    const status = input.decision === "approve" ? "Approved for processing" : "Rejected";
+    const changed = database.prepare(`UPDATE example_transfer_requests SET status = ?, revision = revision + 1
+      WHERE user_id = ? AND transaction_id = ? AND status = 'Pending approval' AND revision = ?`)
+      .run(status, input.userId, input.transactionId, input.expectedRevision);
+    if (changed.changes !== 1) { database.exec("ROLLBACK"); return { ok: false, reason: "CONFLICT" }; }
+    const transactionChanged = database.prepare(`UPDATE example_transactions SET status = ?
+      WHERE user_id = ? AND id = ? AND status = 'Pending approval'`)
+      .run(status, input.userId, input.transactionId);
+    if (transactionChanged.changes !== 1) throw new Error("Transfer and transaction statuses diverged.");
+    const audit: TransferAuditRecord = {
+      id: `transfer-audit-${randomUUID()}`, transactionId: transfer.id, occurredAt: new Date().toISOString(),
+      decision: input.decision, reviewerId: "local-demo-reviewer", reason: input.reason,
+      evaluation, revisionBefore: transfer.revision, revisionAfter: transfer.revision + 1,
+    };
+    database.prepare(`INSERT INTO example_transfer_audit
+      (id, user_id, transaction_id, occurred_at, decision, reviewer_id, reason, evaluation_json, revision_before, revision_after)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      audit.id, input.userId, transfer.id, audit.occurredAt, audit.decision, audit.reviewerId,
+      audit.reason, JSON.stringify(evaluation), audit.revisionBefore, audit.revisionAfter,
+    );
+    database.exec("COMMIT");
+    return { ok: true, transfer: { ...transfer, status, revision: audit.revisionAfter }, audit };
   } catch (error) {
     database.exec("ROLLBACK");
     throw error;

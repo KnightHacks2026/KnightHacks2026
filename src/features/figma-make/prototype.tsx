@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { exampleData, type ExampleData, type ExampleTransaction } from "@/contracts";
 import { TransferDialog } from "./transfer-dialog";
+import { PolicyReview } from "./policy-review";
 import { formatLedgerAmount } from "./ledger-amount";
 
 type Page = "Overview" | "Digital Twin" | "Portfolios" | "Transactions" | "Policy Engine" | "Reporting";
@@ -441,7 +442,7 @@ function Transactions({ data, onNewTransfer, notice }: { data: ExampleData; onNe
   );
 }
 
-function PolicyEngine({ data }: { data: ExampleData }) {
+function PolicyEngine({ data, onDecision }: { data: ExampleData; onDecision: (id: string, status: ExampleTransaction["status"]) => void }) {
   const [selected, setSelected] = useState(0);
   const policies = data.policies;
   const selectedPolicyIndex = Math.min(selected, Math.max(0, policies.length - 1));
@@ -464,6 +465,7 @@ function PolicyEngine({ data }: { data: ExampleData }) {
           <div className="policy-metrics"><div><span>SAMPLE EXECUTIONS / 30D</span><strong>2,481</strong></div><div><span>SAMPLE BLOCKED</span><strong>14</strong></div><div><span>SAMPLE AVG. DECISION</span><strong>184ms</strong></div><div><span>SAMPLE COVERAGE</span><strong>{policies[selectedPolicyIndex].coverage}%</strong></div></div></>}
         </section>
       </div>
+      <PolicyReview onDecision={onDecision} />
     </main>
   );
 }
@@ -535,6 +537,10 @@ export default function App() {
     setPage("Transactions");
     setTransferOpen(false);
   }, []);
+  const onPolicyDecision = useCallback((id: string, status: ExampleTransaction["status"]) => {
+    setFinancialData(current => ({ ...current, transactions: current.transactions.map(transaction =>
+      transaction.id === id ? { ...transaction, status } : transaction) }));
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -593,7 +599,7 @@ export default function App() {
     "Digital Twin": <DigitalTwin data={financialData} />,
     "Portfolios": <Portfolios data={financialData} />,
     "Transactions": <Transactions data={financialData} onNewTransfer={openTransfer} notice={transferNotice} />,
-    "Policy Engine": <PolicyEngine data={financialData} />,
+    "Policy Engine": <PolicyEngine data={financialData} onDecision={onPolicyDecision} />,
     "Reporting": <Reporting />,
   };
   return (
