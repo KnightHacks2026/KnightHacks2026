@@ -254,6 +254,10 @@ h1 { margin-bottom: 4px; font: 400 29px/1.12 "Newsreader", serif; letter-spacing
 .tx-row:hover { background: #eeeaf1; }
 .chart i { background: #9178aa; border-color: #69517e; }
 .chart i.current { background: #65428f; border-color: #432b61; }
+.chart i { position: relative; cursor: help; }
+.chart i:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.chart-tooltip { position: absolute; z-index: 20; left: 50%; bottom: calc(100% + 10px); display: grid; gap: 4px; min-width: max-content; padding: 8px 10px; border: 1px solid #554365; border-radius: 6px; background: #2b2135; color: #eee8f4; font: 9px "IBM Plex Mono"; pointer-events: none; transform: translate(-50%, 0); }
+.chart-tooltip strong { color: #fff; font: 600 11px "IBM Plex Mono"; }
 .allocation-bar i { background: #59367e; }
 .allocation-bar i:nth-child(2) { background: #7959a0; }
 .allocation-bar i:nth-child(3) { background: #9a81b7; }

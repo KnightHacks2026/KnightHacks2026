@@ -282,6 +282,15 @@ function EntityInspector({ selected }: { selected: string }) {
 
 function Overview() {
   const bars = [38, 48, 45, 58, 56, 63, 72, 68, 78, 74, 82, 88, 84, 93, 90, 98, 94, 104, 112, 108, 118, 124, 121, 132];
+  const [activeChartPoint, setActiveChartPoint] = useState<number | null>(null);
+  const chartPoints = bars.map((height, index) => {
+    const progress = index / (bars.length - 1);
+    const trendHeight = 38 + progress * (132 - 38);
+    const valueBillions = Math.min(8.42, Math.max(8.1, 8.1 + progress * 0.32 + (height - trendHeight) * 0.00025));
+    const date = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
+      .format(new Date(Date.UTC(2025, 8, 9 + Math.round(progress * 31))));
+    return { height, date, value: `~$${valueBillions.toFixed(2)}B` };
+  });
   return (
     <main className="page">
       <PageHeading eyebrow="COMMAND CENTER / 10 OCT 2025" title="Operational Overview" description="Estate health, treasury posture, and high-priority actions across the global custody network." actions={<button className="button primary">New transfer</button>} />
@@ -290,7 +299,21 @@ function Overview() {
           <div className="panel-top"><p className="eyebrow">ASSETS UNDER CUSTODY</p><span className="positive">+2.4% MTD</span></div>
           <div className="hero-number">$8.42<span>B</span></div>
           <div className="chart">
-            {bars.map((height, i) => <i key={i} style={{ height }} className={i > 19 ? "current" : ""} />)}
+            {chartPoints.map((point, i) => (
+              <i
+                key={i}
+                style={{ height: point.height }}
+                className={i > 19 ? "current" : ""}
+                tabIndex={0}
+                aria-label={`Estimated sample assets under custody: ${point.value} on ${point.date}`}
+                onPointerEnter={() => setActiveChartPoint(i)}
+                onPointerLeave={() => setActiveChartPoint((active) => active === i ? null : active)}
+                onFocus={() => setActiveChartPoint(i)}
+                onBlur={() => setActiveChartPoint((active) => active === i ? null : active)}
+              >
+                {activeChartPoint === i && <span className="chart-tooltip" aria-hidden="true">{point.date}<strong>{point.value}</strong></span>}
+              </i>
+            ))}
           </div>
           <div className="chart-axis"><span>09 SEP</span><span>18 SEP</span><span>27 SEP</span><span>10 OCT</span></div>
         </section>
