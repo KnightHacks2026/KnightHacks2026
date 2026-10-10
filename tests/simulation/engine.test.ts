@@ -116,6 +116,18 @@ describe("settlement simulation", () => {
     expect(result.projected.obligations.map(o => o.status)).toEqual(["settled", "settled"]);
     expect(result.projected.securitiesBalances.find(b => b.accountId === "acct-a")?.settledUnits).toBe("20");
     expect(result.projected.securitiesBalances.find(b => b.accountId === "acct-b")?.settledUnits).toBe("0");
+    expect(result.projected.securitiesBalances.reduce((sum, b) => sum + BigInt(b.settledUnits), 0n)).toBe(20n);
+  });
+
+  it("rejects an inconsistent partially settled DvP snapshot", () => {
+    const data = input();
+    data.snapshot.obligations = [
+      { ...data.snapshot.obligations[0], id: "cash-leg", settledUnits: "1" },
+      { ...data.snapshot.obligations[0], id: "security-leg", asset: { kind: "security", instrumentId: "instrument-demo" }, fromAccountId: "acct-b", toAccountId: "acct-a", requiredUnits: "20" },
+    ];
+    data.dependencies = [];
+    data.dvpPairs = [{ cashObligationId: "cash-leg", securityObligationId: "security-leg" }];
+    expect(() => simulateSettlement(data)).toThrow("DvP legs must share completion state");
   });
 
   it("defers a predecessor, blocks successors, and rejects priority cycles", () => {
@@ -144,5 +156,25 @@ describe("settlement simulation", () => {
     if (result.status !== "valid") return;
     expect(result.projected.obligations[0].settledUnits).toBe("9007199254740993");
     expect(totalCash(result.projected)).toBe(9007199254742993n);
+  });
+
+  it("rejects a transfer when an earlier settlement consumes its source cash", () => {
+    const data = input();
+    data.request.interventions = [{
+      ...fullFundingScenario.interventions[0],
+      sourceAccountId: "acct-a",
+      targetAccountId: "acct-reserve",
+      amount: { currency: "USD", minorUnits: "1000" },
+      effectiveAt: "2026-10-09T14:10:00Z",
+    }];
+    data.snapshot.cashBalances.find(b => b.accountId === "acct-a")!.settledMinorUnits = "10000";
+    const original = structuredClone(data.snapshot);
+    const result = simulateSettlement(data);
+    expect(result.status).toBe("invalid");
+    if (result.status === "invalid") {
+      expect(result.validationIssues.map(i => i.code)).toContain("INSUFFICIENT_AVAILABLE_CASH");
+      expect("projected" in result).toBe(false);
+    }
+    expect(data.snapshot).toEqual(original);
   });
 });

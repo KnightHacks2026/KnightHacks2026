@@ -78,7 +78,7 @@ export const cascadeBaselineProjection: TwinProjection = {
 };
 
 /** Covers the 1,000-cent shortfall using existing, unreserved cash. */
-export const fullFundingScenario: RunSimulationRequest = {
+export const fullFundingScenario = {
   contractVersion: CONTRACT_VERSION,
   datasetId: "dataset-cascade",
   expectedDatasetRevision: "1",
@@ -95,10 +95,10 @@ export const fullFundingScenario: RunSimulationRequest = {
     effectiveAt: "2026-10-09T13:05:00Z",
     rationale: "Test a funded transfer from the uncommitted reserve.",
   }],
-};
+} satisfies RunSimulationRequest;
 
 /** Tests a smaller transfer while leaving all other inputs identical. */
-export const partialFundingScenario: RunSimulationRequest = {
+export const partialFundingScenario = {
   contractVersion: CONTRACT_VERSION,
   datasetId: "dataset-cascade",
   expectedDatasetRevision: "1",
@@ -115,4 +115,4 @@ export const partialFundingScenario: RunSimulationRequest = {
     effectiveAt: "2026-10-09T13:05:00Z",
     rationale: "Test a partial transfer from the same reserve.",
   }],
-};
+} satisfies RunSimulationRequest;

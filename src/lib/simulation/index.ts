@@ -42,6 +42,9 @@ export interface SimulationInput {
 type Ledger = { settled: bigint; reserved: bigint };
 type State = { cash: Map<string, Ledger>; securities: Map<string, Ledger> };
 type Event = { at: string; kind: "cash_transfer" | "security_transfer"; intervention: SimulationIntervention };
+class AllocationError extends Error {
+  constructor(readonly code: InterventionValidationCode) { super("Inventory double allocation"); }
+}
 const integerPattern = /^(0|[1-9][0-9]*)$/;
 const timestampPattern = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z$/;
 const cashKey = (account: string, currency: string) => `${account}\u0000${currency}`;
@@ -127,7 +130,10 @@ function prepare(input: SimulationInput): { state: State; obligations: Map<strin
     if (cash.fromAccountId !== security.toAccountId || cash.toAccountId !== security.fromAccountId) throw new Error("DvP accounts must be opposite");
     if (predecessors.get(cash.id)!.includes(security.id) || predecessors.get(security.id)!.includes(cash.id)) throw new Error("DvP legs cannot depend on each other");
     if (cash.status === "cancelled" || security.status === "cancelled" ||
-      (cash.status === "settled") !== (security.status === "settled")) throw new Error("DvP legs must share completion state");
+      (cash.status === "settled") !== (security.status === "settled") ||
+      (BigInt(cash.settledUnits) > 0n) !== (BigInt(security.settledUnits) > 0n)) {
+      throw new Error("DvP legs must share completion state");
+    }
     pairs.set(cash.id, security.id); pairs.set(security.id, cash.id);
   }
   return { state, obligations, predecessors, pairs, horizon };
@@ -218,7 +224,7 @@ function move(state: State, kind: "cash" | "security", from: string, to: string,
   const key = kind === "cash" ? cashKey : securityKey;
   const sourceKey = key(from, asset), targetKey = key(to, asset);
   const source = balances.get(sourceKey), target = balances.get(targetKey);
-  if (amount > available(source)) throw new Error("Inventory double allocation");
+  if (amount > available(source)) throw new AllocationError(kind === "cash" ? "INSUFFICIENT_AVAILABLE_CASH" : "INSUFFICIENT_AVAILABLE_SECURITIES");
   if (source) source.settled -= amount;
   if (target) target.settled += amount;
   else balances.set(targetKey, { settled: amount, reserved: 0n });
@@ -330,6 +336,10 @@ function compare(baseline: TwinProjection, projected: TwinProjection): Simulatio
 }
 
 /** Pure replay. Invalid interventions include a baseline but never a projected outcome. */
+export function projectSettlementBaseline(input: SimulationInput): TwinProjection {
+  return project(input, prepare(input), []);
+}
+
 export function simulateSettlement(input: SimulationInput): SimulationResult {
   const prepared = prepare(input);
   const baseline = project(input, prepared, []);
@@ -338,6 +348,12 @@ export function simulateSettlement(input: SimulationInput): SimulationResult {
     baseSnapshotId: input.snapshot.id, modelVersion: SIMULATION_MODEL_VERSION, createdAt: input.createdAt,
     interventionIds: (input.request.interventions ?? []).map(i => i.id), baseline };
   if (validationIssues.length) return { ...common, status: "invalid", validationIssues };
-  const projected = project(input, prepared, input.request.interventions);
+  let projected: TwinProjection;
+  try {
+    projected = project(input, prepared, input.request.interventions);
+  } catch (error) {
+    if (!(error instanceof AllocationError)) throw error;
+    return { ...common, status: "invalid", validationIssues: [issue(error.code, "Intervention inventory was consumed by an earlier settlement", "interventions")] };
+  }
   return { ...common, status: "valid", validationIssues: [], projected, comparison: compare(baseline, projected) };
 }

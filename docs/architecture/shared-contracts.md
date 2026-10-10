@@ -59,6 +59,8 @@ All responses are `ApiResponse<T>` with a versioned `meta` envelope. Errors use 
 
 Import is atomic: all nested `datasetId` values match the requested dataset, all references resolve, and duplicate source keys `(datasetId, sourceSystem, externalId)` fail validation. Platform maps request data from path/query/body and validates it before calling services. Authenticated actor identity must come from the server session; request `proposedBy`, `decidedBy`, and `appliedBy` fields are asserted against it, never trusted on their own. No partial financial import or correction is reported as success.
 
+Simulation is read-only. `RunSimulationResponse` contains the engine result without an `auditEventId`; no correction is approved or applied by this operation. Workspace reads include institutions, accounts, and instruments so detail views can resolve snapshot references from the same dataset. The current route adapters serve only the fixed `dataset-cascade` fixture until the import and persistence service is available. Unknown datasets and snapshots return `NOT_FOUND`.
+
 ## Versioning and agent handoff
 
 `CONTRACT_VERSION` is `1.0.0`. Dataset and request bodies carry it; response metadata and `SimulationResult` echo it. The current types accept that version exactly. Producers reject unsupported versions, and future releases can accept compatible v1 minors explicitly. Patch versions clarify documentation or validation without changing wire shapes; minor versions add optional fields or enum values; major versions may break wire compatibility. Persist the source contract version with imported datasets. API JSON uses camelCase and UTC ISO 8601 timestamps.

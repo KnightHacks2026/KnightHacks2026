@@ -14,6 +14,10 @@ export async function readVersionedJson(request: Request) {
     return { ok: false as const, response: apiError("INVALID_REQUEST", "Expected a JSON request body.", 400) };
   }
 
+  if (typeof input !== "object" || input === null || Array.isArray(input) ||
+    !("contractVersion" in input) || typeof input.contractVersion !== "string") {
+    return { ok: false as const, response: apiError("INVALID_REQUEST", "A contract version is required.", 400) };
+  }
   const parsed = versionedRequestSchema.safeParse(input);
   if (!parsed.success) {
     return {
