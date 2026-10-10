@@ -110,6 +110,9 @@ export interface GetWorkspaceRequest extends DatasetRequest {}
 export type GetWorkspaceResponse = ApiResponse<{
   dataset: Dataset;
   snapshot: FinancialSnapshot;
+  institutions: Institution[];
+  accounts: Account[];
+  instruments: Instrument[];
   exceptions: ReconciliationException[];
   proposals: CorrectionProposal[];
   recentAuditEvents: AuditEvent[];
@@ -130,7 +133,8 @@ export interface RunSimulationRequest extends MutatingDatasetRequest {
 
 export type RunSimulationResponse = ApiResponse<{
   result: SimulationResult;
-  auditEventId: EntityId;
+  /** Present only when a real simulation audit event was persisted. */
+  auditEventId?: EntityId;
 }>;
 
 export interface GetExplanationRequest extends DatasetRequest {
