@@ -15,6 +15,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!src/lib/
 lib64/
 parts/
 sdist/
@@ -151,6 +152,8 @@ activemq-data/
 
 # Environments
 .env
+.env.local
+.env.*.local
 .envrc
 .venv
 env/
@@ -207,6 +210,16 @@ tempCodeRunnerFile.py
 
 # Ruff stuff:
 .ruff_cache/
+
+# Next.js, Node.js, Prisma, and Playwright
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+prisma/*.db
+prisma/*.db-journal
+test-results/
+playwright-report/
 
 # PyPI configuration file
 .pypirc
