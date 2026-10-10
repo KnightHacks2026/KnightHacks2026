@@ -1,5 +1,5 @@
-import { CustodyTwinWorkspace } from "../features/twin/command-center";
+import PrototypeHost from "../features/figma-make/prototype-host";
 
 export default function HomePage() {
-  return <CustodyTwinWorkspace />;
+  return <PrototypeHost />;
 }
