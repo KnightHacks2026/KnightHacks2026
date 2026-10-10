@@ -3,11 +3,13 @@ import { DatabaseSync } from "node:sqlite";
 import { execFileSync } from "node:child_process";
 import { cascadeImport } from "../../src/contracts/fixtures";
 import { POST as importRoute } from "../../src/app/api/datasets/import/route";
+import { GET as financialDataRoute } from "../../src/app/api/users/[userId]/financial-data/route";
 import { GET as workspace } from "../../src/app/api/datasets/[datasetId]/workspace/route";
 import { GET as twin } from "../../src/app/api/datasets/[datasetId]/twin/route";
 import { POST as simulate } from "../../src/app/api/datasets/[datasetId]/simulations/route";
 import { GET as custody } from "../../src/app/api/datasets/[datasetId]/custody/route";
-import { getImportedDataset } from "../../src/lib/data/repository";
+import { getExampleData, getImportedDataset, saveExampleData } from "../../src/lib/data/repository";
+import { exampleData } from "../../src/contracts";
 
 const datasetId = `import-route-test-${crypto.randomUUID()}`;
 const context = { params: Promise.resolve({ datasetId }) };
@@ -48,11 +50,11 @@ describe("dataset import and retrieval", () => {
     expect(source?.snapshot.id).toBe(body.data.snapshotId);
     expect(source?.snapshot.datasetRevision).toBe("1");
     expect(source?.auditEvents[0].id).toBe(body.data.auditEventId);
-    expect(source?.auditEvents[0].actorId).toBe("anonymous");
+    expect(source?.auditEvents[0].actorId).toBe("demo-user");
     const persisted = new DatabaseSync("data/test.sqlite");
-    expect((persisted.prepare("SELECT dataset_revision FROM financial_snapshots WHERE id = ?").get(body.data.snapshotId) as { dataset_revision: string }).dataset_revision).toBe("1");
+    expect((persisted.prepare("SELECT dataset_revision FROM custody_snapshots WHERE user_id = ? AND id = ?").get("demo-user", body.data.snapshotId) as { dataset_revision: string }).dataset_revision).toBe("1");
     persisted.close();
-    const fromNewProcess = execFileSync(process.execPath, ["-e", "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync('data/test.sqlite');process.stdout.write(String(db.prepare('SELECT COUNT(*) AS count FROM financial_snapshots WHERE id=?').get(process.argv[1]).count));db.close()", body.data.snapshotId], { cwd: process.cwd(), encoding: "utf8" });
+    const fromNewProcess = execFileSync(process.execPath, ["-e", "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync('data/test.sqlite');process.stdout.write(String(db.prepare('SELECT COUNT(*) AS count FROM custody_snapshots WHERE user_id=? AND id=?').get(process.argv[1],process.argv[2]).count));db.close()", "demo-user", body.data.snapshotId], { cwd: process.cwd(), encoding: "utf8" });
     expect(fromNewProcess).toBe("1");
     const work = await (await workspace(new Request(`http://localhost/api/datasets/${datasetId}/workspace`), context)).json();
     expect(work.data.snapshot).toEqual(source?.snapshot);
@@ -68,6 +70,68 @@ describe("dataset import and retrieval", () => {
     expect(simulation.data.result.status).toBe("valid");
     expect(simulation.data.result.comparison.newlySettledObligationIds).toHaveLength(3);
     expect((await getImportedDataset(datasetId))?.snapshot).toEqual(source?.snapshot);
+  });
+
+  it("returns the requesting user's sample data and imported datasets", async () => {
+    const response = await financialDataRoute(new Request("http://localhost/api/users/demo-user/financial-data"), {
+      params: Promise.resolve({ userId: "demo-user" }),
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.userId).toBe("demo-user");
+    expect(body.data.assets).toHaveLength(5);
+    expect(body.data.transactions).toHaveLength(5);
+    expect(body.data.policies).toHaveLength(4);
+    expect(body.data.nodes).toHaveLength(8);
+    expect(body.data.edges).toHaveLength(9);
+    expect(body.data.datasets.map((dataset: { dataset: { id: string } }) => dataset.dataset.id)).toContain(datasetId);
+
+    const otherUserResponse = await financialDataRoute(new Request("http://localhost/api/users/another-user/financial-data"), {
+      params: Promise.resolve({ userId: "another-user" }),
+    });
+    const otherUser = await otherUserResponse.json();
+    expect(otherUser.data.datasets).toEqual([]);
+    expect(otherUser.data.assets).toEqual([]);
+  });
+
+  it("rejects an empty user ID", async () => {
+    const response = await financialDataRoute(new Request("http://localhost/api/users/%20/financial-data"), {
+      params: Promise.resolve({ userId: " " }),
+    });
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe("INVALID_REQUEST");
+  });
+
+  describe("user-keyed prototype sample tables", () => {
+    it("round-trips the example collections in their existing object format", async () => {
+      await saveExampleData(exampleData);
+      expect(await getExampleData()).toEqual(exampleData);
+      const database = new DatabaseSync("data/test.sqlite");
+      expect((database.prepare("SELECT COUNT(*) AS count FROM example_assets WHERE user_id = ?").get("demo-user") as { count: number }).count).toBe(exampleData.assets.length);
+      expect((database.prepare("SELECT COUNT(*) AS count FROM example_twin_edges WHERE user_id = ?").get("demo-user") as { count: number }).count).toBe(exampleData.edges.length);
+      database.close();
+    });
+
+    it("keeps example rows scoped to the configured user and rolls back invalid replacements", async () => {
+      const originalUserId = process.env.CUSTODYOS_DEMO_USER_ID;
+      const changedData = structuredClone(exampleData);
+      changedData.assets[0].balance = "42,000.00";
+      await saveExampleData(changedData);
+      const invalidData = structuredClone(changedData);
+      invalidData.edges.push(["missing", "node"]);
+      await expect(saveExampleData(invalidData)).rejects.toThrow();
+      expect(await getExampleData()).toEqual(changedData);
+
+      process.env.CUSTODYOS_DEMO_USER_ID = "other-demo-user";
+      try {
+        expect(await getExampleData()).toEqual(exampleData);
+      } finally {
+        if (originalUserId === undefined) delete process.env.CUSTODYOS_DEMO_USER_ID;
+        else process.env.CUSTODYOS_DEMO_USER_ID = originalUserId;
+      }
+      expect(await getExampleData()).toEqual(changedData);
+      await saveExampleData(exampleData);
+    });
   });
 
   it("rejects a duplicate dataset as a revision conflict and preserves the original", async () => {
@@ -132,11 +196,11 @@ describe("dataset import and retrieval", () => {
   it("rolls back the dataset and snapshot if the audit write fails", async () => {
     const id = `rollback-${crypto.randomUUID()}`;
     const connection = new DatabaseSync("data/test.sqlite");
-    connection.exec(`CREATE TRIGGER fail_import_audit BEFORE INSERT ON dataset_audit_events WHEN NEW.dataset_id = '${id}' BEGIN SELECT RAISE(ABORT, 'audit failure'); END`);
+    connection.exec(`CREATE TRIGGER fail_import_audit BEFORE INSERT ON custody_audit_events WHEN NEW.dataset_id = '${id}' BEGIN SELECT RAISE(ABORT, 'audit failure'); END`);
     try {
       await expect(post(payload(id))).rejects.toThrow("audit failure");
       expect(await getImportedDataset(id)).toBeNull();
-      expect((connection.prepare("SELECT COUNT(*) AS count FROM financial_snapshots WHERE dataset_id = ?").get(id) as { count: number }).count).toBe(0);
+      expect((connection.prepare("SELECT COUNT(*) AS count FROM custody_snapshots WHERE dataset_id = ?").get(id) as { count: number }).count).toBe(0);
     } finally {
       connection.exec("DROP TRIGGER fail_import_audit");
       connection.close();
