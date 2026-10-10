@@ -434,7 +434,7 @@ function PolicyEngine() {
       <PageHeading eyebrow="CONTROL PLANE / POLICY ENGINE" title="Programmable Governance" description="Authorization logic mapped directly to entities, wallets, transaction types, and risk limits." actions={<button className="button primary">Create policy</button>} />
       <div className="policy-workbench">
         <section className="policy-list">
-          <div className="policy-list-title"><p className="eyebrow">POLICY LIBRARY</p><span>12 ACTIVE</span></div>
+          <div className="policy-list-title"><p className="eyebrow">POLICY LIBRARY</p><span>4 SAMPLE POLICIES</span></div>
           {policies.map((policy, i) => <button onClick={() => setSelected(i)} className={selected === i ? "active" : ""} key={policy.name}><span><strong>{policy.name}</strong><small>{policy.scope}</small></span><em>{policy.state}</em></button>)}
         </section>
         <section className="policy-canvas">
@@ -445,7 +445,7 @@ function PolicyEngine() {
             <div className="logic-node featured"><span>REQUIRE</span><strong>{policies[selected].rule.split(" · ")[0]}</strong><small>Approved institutional signers</small></div><i />
             <div className="logic-node"><span>ENFORCE</span><strong>{policies[selected].rule.split(" · ")[1] || "Verified route"}</strong><small>Block on policy exception</small></div>
           </div>
-          <div className="policy-metrics"><div><span>EXECUTIONS / 30D</span><strong>2,481</strong></div><div><span>BLOCKED</span><strong>14</strong></div><div><span>AVG. DECISION</span><strong>184ms</strong></div><div><span>COVERAGE</span><strong>{policies[selected].coverage}%</strong></div></div>
+          <div className="policy-metrics"><div><span>SAMPLE EXECUTIONS / 30D</span><strong>2,481</strong></div><div><span>SAMPLE BLOCKED</span><strong>14</strong></div><div><span>SAMPLE AVG. DECISION</span><strong>184ms</strong></div><div><span>SAMPLE COVERAGE</span><strong>{policies[selected].coverage}%</strong></div></div>
         </section>
       </div>
     </main>
@@ -455,20 +455,22 @@ function PolicyEngine() {
 function Reporting() {
   return (
     <main className="page reporting-page">
-      <PageHeading eyebrow="REPORTING / ASSURANCE" title="Evidence & Reporting" description="Audit-ready records, regulatory submissions, and cryptographic proof across the custody estate." actions={<button className="button primary">Generate report</button>} />
+      <PageHeading eyebrow="REPORTING / SAMPLE SCHEDULE" title="Evidence & Reporting" description="Sample reporting dates and evidence queue. Connect an imported workspace to show its actual obligations and evidence status." actions={<button className="button primary">Generate report</button>} />
       <div className="report-layout">
         <section className="report-calendar">
-          <div className="report-month"><button>←</button><h2>October 2025</h2><button>→</button></div>
+          <div className="report-month"><button>←</button><h2>October 2026 · Sample</h2><button>→</button></div>
           <div className="weekdays">{["MON","TUE","WED","THU","FRI","SAT","SUN"].map(d => <span key={d}>{d}</span>)}</div>
           <div className="days">{Array.from({ length: 35 }, (_, i) => {
-            const day = i - 2;
-            return <div className={`${day === 10 ? "today" : ""} ${day < 1 || day > 31 ? "muted" : ""}`} key={i}><span>{day < 1 ? 30 + day : day > 31 ? day - 31 : day}</span>{day === 3 && <b>Reserve attestation</b>}{day === 10 && <b>SOC evidence pack</b>}{day === 17 && <b>NYDFS filing</b>}{day === 28 && <b>Client statements</b>}</div>;
+            const firstDayOffset = (new Date(Date.UTC(2026, 9, 1)).getUTCDay() + 6) % 7;
+            const day = i - firstDayOffset + 1;
+            const displayDay = day < 1 ? 30 + day : day > 31 ? day - 31 : day;
+            return <div className={`${day === 10 ? "today" : ""} ${day < 1 || day > 31 ? "muted" : ""}`} key={i}><span>{displayDay}</span>{day === 3 && <b>Reserve attestation</b>}{day === 10 && <b>SOC evidence pack</b>}{day === 17 && <b>NYDFS filing</b>}{day === 28 && <b>Client statements</b>}</div>;
           })}</div>
         </section>
         <aside className="report-queue">
-          <p className="eyebrow">UPCOMING OBLIGATIONS</p>
-          {[["SOC 2 evidence pack","Today · 18:00 UTC","94%"],["NYDFS custody filing","17 Oct 2025","71%"],["Q3 client statements","28 Oct 2025","42%"],["Proof of reserves","01 Nov 2025","18%"]].map((r, i) => <div className="report-item" key={r[0]}><span>0{i + 1}</span><div><strong>{r[0]}</strong><small>{r[1]}</small><i><b style={{ width: r[2] }} /></i></div><em>{r[2]}</em></div>)}
-          <div className="assurance-seal"><Icon name="check" size={22} /><span><strong>Evidence integrity verified</strong><small>Last anchored to Ethereum · 14 min ago</small></span></div>
+          <p className="eyebrow">SAMPLE OBLIGATION QUEUE</p>
+          {[["SOC 2 evidence pack","10 Oct 2026 · 18:00 UTC","94%"],["NYDFS custody filing","17 Oct 2026","71%"],["Q3 client statements","28 Oct 2026","42%"],["Proof of reserves","01 Nov 2026","18%"]].map((r, i) => <div className="report-item" key={r[0]}><span>0{i + 1}</span><div><strong>{r[0]}</strong><small>{r[1]}</small><i><b style={{ width: r[2] }} /></i></div><em>{r[2]}</em></div>)}
+          <div className="assurance-seal"><Icon name="check" size={22} /><span><strong>Demo evidence queue</strong><small>No connected evidence source</small></span></div>
         </aside>
       </div>
     </main>
