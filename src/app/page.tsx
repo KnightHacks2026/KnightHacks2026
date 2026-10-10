@@ -1,4 +1,4 @@
-import { CustodyTwinWorkspace } from "../features/twin/custody-twin-workspace";
+import { CustodyTwinWorkspace } from "../features/twin/command-center";
 
 export default function HomePage() {
   return <CustodyTwinWorkspace />;
