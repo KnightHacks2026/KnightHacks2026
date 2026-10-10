@@ -133,6 +133,8 @@ export interface RunSimulationRequest extends MutatingDatasetRequest {
 
 export type RunSimulationResponse = ApiResponse<{
   result: SimulationResult;
+  /** Present only when a real simulation audit event was persisted. */
+  auditEventId?: EntityId;
 }>;
 
 export interface GetExplanationRequest extends DatasetRequest {

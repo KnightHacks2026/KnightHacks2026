@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { RunSimulationResponse } from "../../src/contracts";
 import { cascadeBaselineProjection, fullFundingScenario, partialFundingScenario } from "../../src/contracts/fixtures";
 import { GET as workspace } from "../../src/app/api/datasets/[datasetId]/workspace/route";
 import { GET as twin } from "../../src/app/api/datasets/[datasetId]/twin/route";
@@ -29,11 +30,16 @@ describe("fixture-backed simulation API", () => {
     expect(full.data.result.baseline).toEqual(cascadeBaselineProjection);
     expect(full.data.result.contractVersion).toBe(full.meta.contractVersion);
     expect(full.data).not.toHaveProperty("auditEventId");
+    const responseWithoutAudit: RunSimulationResponse = { ok: true, data: { result: full.data.result }, meta: full.meta };
+    const responseWithAudit: RunSimulationResponse = { ok: true, data: { result: full.data.result, auditEventId: "existing-audit-event" }, meta: full.meta };
+    expect(responseWithoutAudit.data).not.toHaveProperty("auditEventId");
+    expect(responseWithAudit.data).toHaveProperty("auditEventId", "existing-audit-event");
     expect(full.data.result.comparison.newlySettledObligationIds).toHaveLength(3);
     expect(partial.data.result.comparison.stillBlockedObligationIds).toHaveLength(3);
     expect(full.data.result.projected.cashBalances.reduce((sum: bigint, b: { settledMinorUnits: string }) => sum + BigInt(b.settledMinorUnits), 0n)).toBe(11000n);
     const after = await (await workspace(new Request("http://localhost/api/datasets/dataset-cascade/workspace"), context)).json();
     expect(after.data.snapshot.cashBalances.find((b: { accountId: string }) => b.accountId === "acct-reserve").settledMinorUnits).toBe("2000");
+    expect(after.data.recentAuditEvents).toEqual([]);
   });
 
   it("replays an identical result for equivalent JSON requests", async () => {
