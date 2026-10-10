@@ -1,10 +1,11 @@
 import { cascadeImport, cascadeSnapshot } from "@/contracts/fixtures";
 import type { Dataset, FinancialSnapshot } from "@/contracts";
 import type { SimulationInput } from "./index";
+import { getImportedDataset } from "@/lib/data/repository";
 
 /** The only available dataset until the import/persistence service is connected. */
-export function getSimulationDataset(datasetId: string) {
-  if (datasetId !== cascadeImport.dataset.id) return null;
+export async function getSimulationDataset(datasetId: string) {
+  if (datasetId !== cascadeImport.dataset.id) return getImportedDataset(datasetId);
   const dataset: Dataset = {
     ...cascadeImport.dataset,
     revision: cascadeSnapshot.datasetRevision,
@@ -18,11 +19,13 @@ export function getSimulationDataset(datasetId: string) {
     accounts: structuredClone(cascadeImport.accounts),
     instruments: structuredClone(cascadeImport.instruments),
     dependencies: structuredClone(cascadeImport.dependencies),
+    sourceRecords: structuredClone(cascadeImport.sourceRecords),
+    auditEvents: [],
   };
 }
 
 export function simulationInputForDataset(
-  source: NonNullable<ReturnType<typeof getSimulationDataset>>,
+  source: NonNullable<Awaited<ReturnType<typeof getSimulationDataset>>>,
   request: SimulationInput["request"],
   resultId: string,
   createdAt: string,

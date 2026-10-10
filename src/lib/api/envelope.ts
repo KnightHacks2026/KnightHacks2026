@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { CONTRACT_VERSION, type ApiErrorCode, type ApiResponse, type DecimalInteger } from "@/contracts";
+import { CONTRACT_VERSION, type ApiErrorCode, type ApiResponse, type DecimalInteger, type ValidationIssue } from "@/contracts";
 
 function meta(datasetRevision?: DecimalInteger) {
   return {
@@ -19,8 +19,9 @@ export function apiError<T = never>(
   code: ApiErrorCode,
   message: string,
   status: number,
+  validationIssues?: ValidationIssue[],
 ) {
-  const body: ApiResponse<T> = { ok: false, error: { code, message }, meta: meta() };
+  const body: ApiResponse<T> = { ok: false, error: { code, message, ...(validationIssues ? { validationIssues } : {}) }, meta: meta() };
   return NextResponse.json(body, { status });
 }
 

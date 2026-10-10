@@ -9,7 +9,7 @@ export async function GET(request: Request, context: { params: Promise<{ dataset
     return apiError("UNSUPPORTED_CONTRACT_VERSION", `Expected contract version ${CONTRACT_VERSION}.`, 400);
   }
   if (!datasetId) return apiError("INVALID_REQUEST", "A dataset ID is required.", 400);
-  const source = getSimulationDataset(datasetId);
+  const source = await getSimulationDataset(datasetId);
   if (!source) return apiError("NOT_FOUND", "Dataset not found.", 404);
   const data = {
     dataset: source.dataset,
@@ -19,7 +19,7 @@ export async function GET(request: Request, context: { params: Promise<{ dataset
     instruments: source.instruments,
     exceptions: [],
     proposals: [],
-    recentAuditEvents: [],
+    recentAuditEvents: source.auditEvents,
   } satisfies Extract<GetWorkspaceResponse, { ok: true }>["data"];
   return apiSuccess(data, 200, source.dataset.revision);
 }
