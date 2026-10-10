@@ -1,20 +1,48 @@
 import { expect, test } from "@playwright/test";
 
-test("command center renders the graph and compares a selected scenario", async ({ page }) => {
+test("Figma Make opens Overview on arrival and refresh while preserving six screens", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Three-leg settlement cascade" })).toBeVisible();
-  await expect(page.locator(".react-flow__node")).toHaveCount(3);
+  await expect(page.getByRole("heading", { name: "Operational Overview", level: 1 })).toBeVisible();
+  await expect(page.locator(".section-tabs button.active")).toHaveText("Overview");
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Operational Overview", level: 1 })).toBeVisible();
+  await expect(page.locator(".section-tabs button.active")).toHaveText("Overview");
 
-  const scenarios = page.getByRole("radiogroup", { name: "Choose a scenario" });
-  const full = scenarios.getByRole("radio", { name: /Full-gap transfer/ });
-  const partial = scenarios.getByRole("radio", { name: /Partial transfer/ });
-  await expect(full).toHaveAttribute("aria-checked", "true");
-  await partial.click();
-  await expect(partial).toHaveAttribute("aria-checked", "true");
-  await expect(full).toHaveAttribute("aria-checked", "false");
-  await expect(page.locator(".cc-transfer")).toContainText("USD 5.00");
+  const screens = [
+    ["Digital Twin", "Institutional Asset Topology"],
+    ["Overview", "Operational Overview"],
+    ["Portfolios", "Asset Inventory"],
+    ["Transactions", "Transaction Monitor"],
+    ["Policy Engine", "Programmable Governance"],
+    ["Reporting", "Evidence & Reporting"],
+  ] as const;
+  for (const [tab, heading] of screens) {
+    await page.locator(".section-tabs").getByRole("button", { name: tab, exact: true }).click();
+    await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
+    await expect(page.locator(".section-tabs button.active")).toHaveText(tab);
+  }
+});
 
-  await page.getByRole("button", { name: "Run comparison" }).click();
-  await expect(page.getByText("ENGINE RESULT")).toBeVisible();
-  await expect(page.locator(".cc-comparison-insight")).toContainText("3 still blocked");
+test("Assets Under Custody final bar aligns with 10 OCT", async ({ page }) => {
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
+    await page.goto("/");
+    const alignment = await page.locator(".exposure-panel").evaluate((panel) => {
+      const chart = panel.querySelector(".chart");
+      const bars = panel.querySelectorAll(".chart i");
+      const label = panel.querySelector(".chart-axis span:last-child");
+      if (!chart || bars.length !== 24 || !label) throw new Error("Custody chart is incomplete");
+      return {
+        chartRight: chart.getBoundingClientRect().right,
+        barRight: bars[23].getBoundingClientRect().right,
+        labelRight: label.getBoundingClientRect().right,
+        firstHeight: bars[0].getBoundingClientRect().height,
+        finalHeight: bars[23].getBoundingClientRect().height,
+      };
+    });
+    expect(Math.abs(alignment.barRight - alignment.chartRight)).toBeLessThanOrEqual(1);
+    expect(Math.abs(alignment.barRight - alignment.labelRight)).toBeLessThanOrEqual(1);
+    expect(alignment.firstHeight).toBe(38);
+    expect(alignment.finalHeight).toBe(132);
+  }
 });
