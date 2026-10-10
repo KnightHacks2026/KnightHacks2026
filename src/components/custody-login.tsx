@@ -75,13 +75,14 @@ export default function CustodyLogin() {
     <main className={styles.screen}>
       <section className={styles.access} aria-labelledby="access-title">
         <header className={styles.brand}>
-          <span className={styles.brandMark} aria-hidden="true"><span /><span /><span /></span>
-          <span>CustodyOS</span>
+          <span className={styles.brandMark} aria-hidden="true"><span /><span /><span /><span /></span>
+          <span className={styles.brandName}>CUSTODY</span>
+          <span className={styles.brandOs}>OS</span>
         </header>
 
         <div className={styles.accessBody}>
           <p className={styles.kicker}>CUSTODY OPERATIONS</p>
-          <h1 id="access-title">Sign in to CustodyOS.</h1>
+          <h1 id="access-title">Sign in to<br />CustodyOS.</h1>
           <p className={styles.intro}>Review settlement risk and funding options in one workspace.</p>
 
           <form
@@ -104,15 +105,9 @@ export default function CustodyLogin() {
             <button className={styles.enterButton} type="submit">
               Log in <span aria-hidden="true">→</span>
             </button>
-            <p className={styles.formNote}>Demo only. Use any email and a made-up password.</p>
           </form>
 
         </div>
-
-        <footer className={styles.accessFooter}>
-          <span>SAMPLE DATA</span>
-          <span>Actions require human review.</span>
-        </footer>
       </section>
 
       <section className={styles.stage} aria-label="Synthetic settlement case preview">
