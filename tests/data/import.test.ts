@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { execFileSync } from "node:child_process";
 import { cascadeImport } from "../../src/contracts/fixtures";
 import { POST as importRoute } from "../../src/app/api/datasets/import/route";
+import { GET as financialDataRoute } from "../../src/app/api/users/[userId]/financial-data/route";
 import { GET as workspace } from "../../src/app/api/datasets/[datasetId]/workspace/route";
 import { GET as twin } from "../../src/app/api/datasets/[datasetId]/twin/route";
 import { POST as simulate } from "../../src/app/api/datasets/[datasetId]/simulations/route";
@@ -69,6 +70,36 @@ describe("dataset import and retrieval", () => {
     expect(simulation.data.result.status).toBe("valid");
     expect(simulation.data.result.comparison.newlySettledObligationIds).toHaveLength(3);
     expect((await getImportedDataset(datasetId))?.snapshot).toEqual(source?.snapshot);
+  });
+
+  it("returns the requesting user's sample data and imported datasets", async () => {
+    const response = await financialDataRoute(new Request("http://localhost/api/users/demo-user/financial-data"), {
+      params: Promise.resolve({ userId: "demo-user" }),
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.userId).toBe("demo-user");
+    expect(body.data.assets).toHaveLength(5);
+    expect(body.data.transactions).toHaveLength(5);
+    expect(body.data.policies).toHaveLength(4);
+    expect(body.data.nodes).toHaveLength(8);
+    expect(body.data.edges).toHaveLength(9);
+    expect(body.data.datasets.map((dataset: { dataset: { id: string } }) => dataset.dataset.id)).toContain(datasetId);
+
+    const otherUserResponse = await financialDataRoute(new Request("http://localhost/api/users/another-user/financial-data"), {
+      params: Promise.resolve({ userId: "another-user" }),
+    });
+    const otherUser = await otherUserResponse.json();
+    expect(otherUser.data.datasets).toEqual([]);
+    expect(otherUser.data.assets).toEqual([]);
+  });
+
+  it("rejects an empty user ID", async () => {
+    const response = await financialDataRoute(new Request("http://localhost/api/users/%20/financial-data"), {
+      params: Promise.resolve({ userId: " " }),
+    });
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe("INVALID_REQUEST");
   });
 
   describe("user-keyed prototype sample tables", () => {

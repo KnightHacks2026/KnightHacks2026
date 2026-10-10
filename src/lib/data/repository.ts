@@ -178,10 +178,9 @@ function seedExampleData(database: DatabaseSync, userId: string) {
   }
 }
 
-export async function getExampleData(): Promise<ExampleData> {
+export async function getExampleData(userId = demoUserId()): Promise<ExampleData> {
   const database = await getDatabase();
-  const userId = demoUserId();
-  seedExampleData(database, userId);
+  if (userId === demoUserId()) seedExampleData(database, userId);
   const assets = database.prepare("SELECT symbol, name, balance, value, change, share FROM example_assets WHERE user_id = ? ORDER BY position").all(userId)
     .map(row => ({ symbol: String(row.symbol), name: String(row.name), balance: String(row.balance), value: String(row.value), change: String(row.change), share: Number(row.share) }));
   const transactions = database.prepare("SELECT id, time, type, asset, amount, value, route, status FROM example_transactions WHERE user_id = ? ORDER BY position").all(userId)
@@ -297,12 +296,11 @@ function getLegacyDataset(database: DatabaseSync, datasetId: string): Promise<Da
     auditEvents: auditRecords.map(event => JSON.parse(event.payload) as AuditEvent) });
 }
 
-export async function getImportedDataset(datasetId: string): Promise<DatasetSource | null> {
+export async function getImportedDataset(datasetId: string, userId = demoUserId()): Promise<DatasetSource | null> {
   const database = await getDatabase();
-  const userId = demoUserId();
   const record = database.prepare(`SELECT id, revision, contract_version, name, as_of, created_at, status
     FROM custody_datasets WHERE user_id = ? AND id = ?`).get(userId, datasetId) as DatasetRow | undefined;
-  if (!record) return getLegacyDataset(database, datasetId);
+  if (!record) return userId === demoUserId() ? getLegacyDataset(database, datasetId) : null;
 
   const dataset: Dataset = { id: record.id, revision: record.revision, contractVersion: record.contract_version as Dataset["contractVersion"],
     name: record.name, asOf: record.as_of, createdAt: record.created_at, status: record.status };
@@ -368,4 +366,15 @@ export async function getImportedDataset(datasetId: string): Promise<DatasetSour
   const snapshot: FinancialSnapshot = { id: snapshotRow.id, datasetId: snapshotRow.dataset_id, datasetRevision: snapshotRow.dataset_revision as DecimalInteger,
     asOf: snapshotRow.as_of, cashBalances, securitiesBalances, obligations };
   return { dataset, snapshot, institutions, accounts, instruments, sourceRecords, dependencies, auditEvents };
+}
+
+export async function getFinancialDataForUser(userId: string) {
+  const database = await getDatabase();
+  const datasetRows = database.prepare("SELECT id FROM custody_datasets WHERE user_id = ? ORDER BY created_at DESC, id").all(userId);
+  const datasets = await Promise.all(datasetRows.map(row => getImportedDataset(String(row.id), userId)));
+  return {
+    userId,
+    ...(await getExampleData(userId)),
+    datasets: datasets.filter((dataset): dataset is DatasetSource => dataset !== null),
+  };
 }
