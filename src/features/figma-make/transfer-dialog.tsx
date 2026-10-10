@@ -126,7 +126,7 @@ export function TransferDialog({ assets, onClose, onCreated }: TransferDialogPro
         <input id="transfer-amount" ref={amountRef} inputMode="decimal" autoComplete="off" placeholder="0.00" value={amount} onChange={changeAmount} disabled={submitting} required />
         <label htmlFor="transfer-destination">Destination</label>
         <input id="transfer-destination" autoComplete="off" maxLength={128} placeholder="Institution or account label" value={destination} onChange={event => setDestination(event.target.value)} disabled={submitting} required />
-        <p className="transfer-hint">Demo request only · Pending approval after submission</p>
+        <p className="transfer-hint">Demo request only · Pending approval after submission. For the synthetic approvable scenario, enter Demo Treasury and no more than 10 asset units.</p>
         {error && <p className="transfer-error" role="alert">{error}</p>}
         <div className="transfer-actions">
           <button type="button" className="button secondary" disabled={submitting} onClick={onClose}>Cancel</button>
