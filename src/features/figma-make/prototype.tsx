@@ -1,7 +1,7 @@
 "use client";
 
 // Figma Make prototype data below is demo/sample data and is not connected to CustodyOS APIs.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Page = "Overview" | "Digital Twin" | "Portfolios" | "Transactions" | "Policy Engine" | "Reporting";
 
@@ -453,12 +453,25 @@ function Reporting() {
 }
 
 function CommandPalette({ close, setPage }: { close: () => void; setPage: (page: Page) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [query, setQuery] = useState("");
+  const filteredNavigation = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    return navigation.filter(({ label }) => label.toLocaleLowerCase().includes(normalizedQuery));
+  }, [query]);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
   return (
     <div className="command-overlay" onMouseDown={close}>
-      <div className="command-palette" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="command-input"><Icon name="search" /><input autoFocus placeholder="Search entities, wallets, transactions, or commands…" /></div>
+      <div className="command-palette" role="dialog" aria-modal="true" aria-label="Command palette" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="command-input"><Icon name="search" /><input ref={inputRef} aria-label="Search entities, wallets, transactions, or commands" placeholder="Search entities, wallets, transactions, or commands…" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") close(); }} /></div>
         <p className="eyebrow">NAVIGATE</p>
-        {navigation.map(n => <button key={n.label} onClick={() => { setPage(n.label); close(); }}><Icon name={n.icon} /><span>{n.label}</span><kbd>↵</kbd></button>)}
+        {filteredNavigation.length > 0
+          ? filteredNavigation.map(n => <button key={n.label} onClick={() => { setPage(n.label); close(); }}><Icon name={n.icon} /><span>{n.label}</span><kbd>↵</kbd></button>)
+          : <p className="command-empty" role="status">No matching commands</p>}
         <div className="command-foot"><span>↑↓ Navigate</span><span>↵ Open</span><span>esc Close</span></div>
       </div>
     </div>
@@ -468,6 +481,24 @@ function CommandPalette({ close, setPage }: { close: () => void; setPage: (page:
 export default function App() {
   const [page, setPage] = useState<Page>("Overview");
   const [commandOpen, setCommandOpen] = useState(false);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandOpen((open) => !open);
+        return;
+      }
+
+      if (event.key === "Escape" && commandOpen) {
+        event.preventDefault();
+        setCommandOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [commandOpen]);
   const pages: Record<Page, React.ReactNode> = {
     "Overview": <Overview />,
     "Digital Twin": <DigitalTwin />,
