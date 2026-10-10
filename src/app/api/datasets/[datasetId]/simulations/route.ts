@@ -14,7 +14,7 @@ export async function POST(request: Request, context: { params: Promise<{ datase
   const body = simulationRequestSchema.safeParse(parsed.input);
   if (!body.success) return apiError("INVALID_REQUEST", "Invalid simulation request.", 400);
   if (body.data.datasetId !== datasetId) return apiError("INVALID_REQUEST", "Dataset ID does not match the route.", 400);
-  const source = getSimulationDataset(datasetId);
+  const source = await getSimulationDataset(datasetId);
   if (!source) return apiError("NOT_FOUND", "Dataset not found.", 404);
   if (body.data.baseSnapshotId !== source.snapshot.id) return apiError("NOT_FOUND", "Snapshot not found.", 404);
   if (body.data.expectedDatasetRevision !== source.dataset.revision) {

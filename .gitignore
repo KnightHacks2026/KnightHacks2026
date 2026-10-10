@@ -218,6 +218,8 @@ out/
 *.tsbuildinfo
 prisma/*.db
 prisma/*.db-journal
+data/*.sqlite
+data/*.sqlite-*
 test-results/
 playwright-report/
 

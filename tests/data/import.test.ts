@@ -1,0 +1,145 @@
+import { describe, expect, it } from "vitest";
+import { DatabaseSync } from "node:sqlite";
+import { execFileSync } from "node:child_process";
+import { cascadeImport } from "../../src/contracts/fixtures";
+import { POST as importRoute } from "../../src/app/api/datasets/import/route";
+import { GET as workspace } from "../../src/app/api/datasets/[datasetId]/workspace/route";
+import { GET as twin } from "../../src/app/api/datasets/[datasetId]/twin/route";
+import { POST as simulate } from "../../src/app/api/datasets/[datasetId]/simulations/route";
+import { GET as custody } from "../../src/app/api/datasets/[datasetId]/custody/route";
+import { getImportedDataset } from "../../src/lib/data/repository";
+
+const datasetId = `import-route-test-${crypto.randomUUID()}`;
+const context = { params: Promise.resolve({ datasetId }) };
+const payload = (id = datasetId) => {
+  const copy = structuredClone(cascadeImport);
+  copy.dataset.id = id;
+  for (const key of ["institutions", "accounts", "instruments", "sourceRecords", "obligations", "dependencies"] as const) {
+    for (const item of copy[key]) item.datasetId = id;
+  }
+  return copy;
+};
+const post = (body: unknown) => importRoute(new Request("http://localhost/api/datasets/import", { method: "POST", body: JSON.stringify(body) }));
+
+describe("dataset import and retrieval", () => {
+  it("returns structured validation failures for references, identifiers, and inventory", async () => {
+    const invalid = payload();
+    invalid.accounts[0].institutionId = "missing";
+    invalid.accounts.push({ ...invalid.accounts[0] });
+    invalid.accounts[1].externalId = invalid.accounts[0].externalId;
+    invalid.sourceRecords[1].externalId = invalid.sourceRecords[0].externalId;
+    invalid.dependencies[0].predecessorObligationId = "missing-obligation";
+    invalid.initialCashBalances[0].reservedMinorUnits = "999999";
+    const response = await post(invalid);
+    expect(response.status).toBe(422);
+    const body = await response.json();
+    expect(body.error.code).toBe("VALIDATION_FAILED");
+    expect(body.error.validationIssues.map((issue: { code: string }) => issue.code)).toEqual(expect.arrayContaining(["MISSING_REFERENCE", "DUPLICATE_ID", "DUPLICATE_SOURCE", "DUPLICATE_EXTERNAL_ID", "INVALID_BALANCE"]));
+    expect(await getImportedDataset(datasetId)).toBeNull();
+  });
+
+  it("atomically imports and persists a revisioned snapshot for all read services", async () => {
+    const response = await post(payload());
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.data.dataset.revision).toBe("1");
+    expect(body.data.imported.obligations).toBe(3);
+    const source = await getImportedDataset(datasetId);
+    expect(source?.snapshot.id).toBe(body.data.snapshotId);
+    expect(source?.snapshot.datasetRevision).toBe("1");
+    expect(source?.auditEvents[0].id).toBe(body.data.auditEventId);
+    expect(source?.auditEvents[0].actorId).toBe("anonymous");
+    const persisted = new DatabaseSync("data/test.sqlite");
+    expect((persisted.prepare("SELECT dataset_revision FROM financial_snapshots WHERE id = ?").get(body.data.snapshotId) as { dataset_revision: string }).dataset_revision).toBe("1");
+    persisted.close();
+    const fromNewProcess = execFileSync(process.execPath, ["-e", "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync('data/test.sqlite');process.stdout.write(String(db.prepare('SELECT COUNT(*) AS count FROM financial_snapshots WHERE id=?').get(process.argv[1]).count));db.close()", body.data.snapshotId], { cwd: process.cwd(), encoding: "utf8" });
+    expect(fromNewProcess).toBe("1");
+    const work = await (await workspace(new Request(`http://localhost/api/datasets/${datasetId}/workspace`), context)).json();
+    expect(work.data.snapshot).toEqual(source?.snapshot);
+    expect(work.data.recentAuditEvents).toHaveLength(1);
+    const graph = await (await twin(new Request(`http://localhost/api/datasets/${datasetId}/twin`), context)).json();
+    expect(graph.data.projection.obligations).toHaveLength(3);
+    expect(graph.data.projection.datasetId).toBe(datasetId);
+    const assessment = await (await custody(new Request(`http://localhost/api/datasets/${datasetId}/custody`), context)).json();
+    expect(assessment.data.assessment.obligations).toHaveLength(3);
+    const simulationRequest = { contractVersion: "1.0.0", datasetId, expectedDatasetRevision: "1", baseSnapshotId: body.data.snapshotId,
+      interventions: [{ id: "fund-test", kind: "cash_transfer", datasetId, baseSnapshotId: body.data.snapshotId, expectedDatasetRevision: "1", rationale: "test", sourceAccountId: "acct-reserve", targetAccountId: "acct-a", amount: { currency: "USD", minorUnits: "1000" }, effectiveAt: "2026-10-09T13:05:00Z" }] };
+    const simulation = await (await simulate(new Request(`http://localhost/api/datasets/${datasetId}/simulations`, { method: "POST", body: JSON.stringify(simulationRequest) }), context)).json();
+    expect(simulation.data.result.status).toBe("valid");
+    expect(simulation.data.result.comparison.newlySettledObligationIds).toHaveLength(3);
+    expect((await getImportedDataset(datasetId))?.snapshot).toEqual(source?.snapshot);
+  });
+
+  it("rejects a duplicate dataset as a revision conflict and preserves the original", async () => {
+    const replacement = payload();
+    replacement.dataset.name = "replacement";
+    const response = await post(replacement);
+    expect(response.status).toBe(409);
+    expect((await response.json()).error.code).toBe("REVISION_CONFLICT");
+    expect((await getImportedDataset(datasetId))?.dataset.name).not.toBe("replacement");
+  });
+
+  it("reports missing datasets and stale simulation revisions", async () => {
+    const missing = await workspace(new Request("http://localhost/api/datasets/missing/workspace"), { params: Promise.resolve({ datasetId: "missing" }) });
+    expect(missing.status).toBe(404);
+    expect((await missing.json()).error.code).toBe("NOT_FOUND");
+    const source = await getImportedDataset(datasetId);
+    const response = await simulate(new Request(`http://localhost/api/datasets/${datasetId}/simulations`, { method: "POST", body: JSON.stringify({
+      contractVersion: "1.0.0", datasetId, expectedDatasetRevision: "2", baseSnapshotId: source?.snapshot.id,
+      interventions: [{ id: "stale", kind: "cash_transfer", datasetId, baseSnapshotId: source?.snapshot.id, expectedDatasetRevision: "2", rationale: "test", sourceAccountId: "acct-reserve", targetAccountId: "acct-a", amount: { currency: "USD", minorUnits: "1000" }, effectiveAt: "2026-10-09T13:05:00Z" }],
+    }) }), context);
+    expect(response.status).toBe(409);
+    expect((await response.json()).error.code).toBe("REVISION_CONFLICT");
+  });
+
+  it("keeps the cascade fixture ID reserved", async () => {
+    const response = await post(cascadeImport);
+    expect(response.status).toBe(409);
+  });
+
+  it("rejects unsupported DvP fields and inconsistent financial state", async () => {
+    const unsupported = await post({ ...payload(), dvpPairs: [{ cashObligationId: "missing", securityObligationId: "missing" }] });
+    expect(unsupported.status).toBe(422);
+    expect((await unsupported.json()).error.validationIssues[0].field).toBe("");
+    const invalid = payload();
+    invalid.obligations[0].status = "settled";
+    invalid.obligations[1].status = "cancelled";
+    invalid.obligations[1].settledUnits = "1";
+    invalid.sourceRecords[0].amount!.minorUnits = "-1";
+    invalid.sourceRecords[0].receivedAt = "2026-10-09T14:00:00Z";
+    invalid.initialCashBalances[0].accountId = "acct-b";
+    invalid.initialSecuritiesBalances.push({ accountId: "acct-b", instrumentId: "instrument-demo", settledUnits: "1", reservedUnits: "0" });
+    const response = await post(invalid);
+    expect(response.status).toBe(422);
+    const codes = (await response.json()).error.validationIssues.map((issue: { code: string }) => issue.code);
+    expect(codes).toEqual(expect.arrayContaining(["INVALID_STATUS", "INVALID_UNITS", "INVALID_SOURCE_TIME", "ACCOUNT_POLICY"]));
+    expect(await getImportedDataset(datasetId)).not.toBeNull();
+  });
+
+  it("isolates imports and safely handles concurrent duplicate IDs", async () => {
+    const id = `isolation-${crypto.randomUUID()}`;
+    const [first, second] = await Promise.all([post(payload(id)), post(payload(id))]);
+    expect([first.status, second.status].sort()).toEqual([201, 409]);
+    const isolated = await getImportedDataset(id);
+    expect(isolated?.snapshot.datasetId).toBe(id);
+    expect(isolated?.auditEvents).toHaveLength(1);
+    expect((await getImportedDataset(datasetId))?.snapshot.datasetId).toBe(datasetId);
+    const quotedId = `quote-'${crypto.randomUUID()}`;
+    expect((await post(payload(quotedId))).status).toBe(201);
+    expect((await getImportedDataset(quotedId))?.dataset.id).toBe(quotedId);
+  });
+
+  it("rolls back the dataset and snapshot if the audit write fails", async () => {
+    const id = `rollback-${crypto.randomUUID()}`;
+    const connection = new DatabaseSync("data/test.sqlite");
+    connection.exec(`CREATE TRIGGER fail_import_audit BEFORE INSERT ON dataset_audit_events WHEN NEW.dataset_id = '${id}' BEGIN SELECT RAISE(ABORT, 'audit failure'); END`);
+    try {
+      await expect(post(payload(id))).rejects.toThrow("audit failure");
+      expect(await getImportedDataset(id)).toBeNull();
+      expect((connection.prepare("SELECT COUNT(*) AS count FROM financial_snapshots WHERE dataset_id = ?").get(id) as { count: number }).count).toBe(0);
+    } finally {
+      connection.exec("DROP TRIGGER fail_import_audit");
+      connection.close();
+    }
+  });
+});
