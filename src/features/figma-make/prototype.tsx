@@ -6,6 +6,7 @@ import { TransferDialog } from "./transfer-dialog";
 import { PolicyReview } from "./policy-review";
 import { formatLedgerAmount } from "./ledger-amount";
 import { joinTwinTransfers, policyResultLabel, type TransferReviews, type TwinTransfer } from "./twin-transfers";
+import { SettlementCanvas, SettlementInspector, useSettlementSimulation } from "./settlement-simulation";
 
 type Page = "Overview" | "Digital Twin" | "Portfolios" | "Transactions" | "Policy Engine" | "Reporting";
 
@@ -157,6 +158,7 @@ function PageHeading({ eyebrow, title, description, actions }: { eyebrow: string
 }
 
 function DigitalTwin({ data, reviews, refreshError }: { data: ExampleData; reviews: TransferReviews | null; refreshError: string }) {
+  const settlement = useSettlementSimulation();
   const [selected, setSelected] = useState("ACME BANK");
   const [selectedTransferId, setSelectedTransferId] = useState("");
   const [dragging, setDragging] = useState<string | null>(null);
@@ -218,13 +220,14 @@ function DigitalTwin({ data, reviews, refreshError }: { data: ExampleData; revie
   return (
     <main className="page twin-page">
       <PageHeading
-        eyebrow="DIGITAL TWIN / LIVE ESTATE"
-        title="Institutional Asset Topology"
-        description="A real-time model of entities, wallets, controls, networks, and settlement exposure."
-        actions={<><button className="button secondary">Export view</button><button className="button primary">Open console</button></>}
+        eyebrow={settlement.mode ? "DIGITAL TWIN / SYNTHETIC PREVIEW" : "DIGITAL TWIN / LIVE ESTATE"}
+        title={settlement.mode ? "Settlement Simulation" : "Institutional Asset Topology"}
+        description={settlement.mode ? "Explore a three-leg settlement dependency chain and compare local funding previews." : "A real-time model of entities, wallets, controls, networks, and settlement exposure."}
+        actions={settlement.mode ? undefined : <><button className="button secondary">Export view</button><button className="button primary">Open console</button></>}
       />
-      <div className="twin-layout">
-        <section className="graph-shell">
+      <div className="twin-mode-switch" role="group" aria-label="Digital Twin mode"><button type="button" aria-pressed={!settlement.mode} onClick={() => settlement.setMode(false)}>Institutional topology</button><button type="button" aria-pressed={settlement.mode} onClick={() => settlement.setMode(true)}>Settlement Simulation</button></div>
+      <div className={`twin-layout ${settlement.mode ? "twin-layout--simulation" : ""}`}>
+        {settlement.mode ? <SettlementCanvas state={settlement} /> : <section className="graph-shell">
           <div className="graph-meta"><span>DEMO TOPOLOGY</span><b>● {nodes.length} VISIBLE NODES</b><span>{edges.length} EDGES</span><span>PERSISTED REQUESTS IN INSPECTOR</span></div>
           <svg
             className={`network ${dragging ? "is-dragging" : ""}`}
@@ -270,8 +273,8 @@ function DigitalTwin({ data, reviews, refreshError }: { data: ExampleData; revie
           </svg>
           <div className="graph-controls">CLICK TO SELECT <span>·</span> DRAG NODES <span>·</span> SCROLL TO ZOOM</div>
           <button className="zoom-reset" onClick={resetZoom} aria-label="Reset graph zoom">{zoomPercent}% <span>RESET</span></button>
-        </section>
-        <EntityInspector selected={selected} assets={data.assets} transfers={transfers} selectedTransfer={selectedTransfer} onSelectTransfer={setSelectedTransferId} refreshError={refreshError} reviewsLoaded={reviews !== null} />
+        </section>}
+        {settlement.mode ? <SettlementInspector state={settlement} /> : <EntityInspector selected={selected} assets={data.assets} transfers={transfers} selectedTransfer={selectedTransfer} onSelectTransfer={setSelectedTransferId} refreshError={refreshError} reviewsLoaded={reviews !== null} />}
       </div>
     </main>
   );
