@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { exampleData, type ExampleData, type ExampleTransaction } from "@/contracts";
 import { TransferDialog } from "./transfer-dialog";
 import { PolicyReview } from "./policy-review";
@@ -30,8 +31,6 @@ const navigation: { label: Page; icon: IconName }[] = [
   { label: "Policy Engine", icon: "policy" },
   { label: "Reporting", icon: "reporting" },
 ];
-
-const DEMO_USER_ID = "demo-user";
 
 type FinancialDataResponse =
   | { ok: true; data: ExampleData & { userId: string; datasets: unknown[] } }
@@ -394,7 +393,7 @@ function Overview({ data, onNewTransfer }: { data: ExampleData; onNewTransfer: (
   );
 }
 
-function Portfolios({ data, onOpenTwin }: { data: ExampleData; onOpenTwin: () => void }) {
+function Portfolios({ data, userId, onOpenTwin }: { data: ExampleData; userId: string; onOpenTwin: () => void }) {
   const { assets } = data;
   const netAssetValue = sumAssetValues(assets);
   const [active, setActive] = useState("Consolidated");
@@ -411,7 +410,7 @@ function Portfolios({ data, onOpenTwin }: { data: ExampleData; onOpenTwin: () =>
   const runReconciliation = async () => {
     setReconcileOpen(true); setReconcileLoading(true); setReconcileError(""); setAssessment(null); setSelectedExceptionId("");
     try {
-      const dataResponse = await fetch(`/api/users/${encodeURIComponent(DEMO_USER_ID)}/financial-data`, { cache: "no-store" });
+      const dataResponse = await fetch(`/api/users/${encodeURIComponent(userId)}/financial-data`, { cache: "no-store" });
       const dataBody = await dataResponse.json() as { ok: boolean; data?: { datasets?: { dataset?: { id?: string; name?: string; status?: string } }[] }; error?: { message?: string } };
       if (!dataResponse.ok || !dataBody.ok) throw new Error(dataBody.error?.message || "Unable to load imported datasets.");
       const dataset = dataBody.data?.datasets?.find(item => item.dataset?.status === "ready") ?? dataBody.data?.datasets?.[0];
@@ -614,6 +613,8 @@ function CommandPalette({ close, setPage }: { close: () => void; setPage: (page:
 }
 
 export default function App() {
+  const router = useRouter();
+  const [USER_ID, setUSER_ID] = useState("");
   const [page, setPage] = useState<Page>("Overview");
   const [commandOpen, setCommandOpen] = useState(false);
   const [financialData, setFinancialData] = useState<ExampleData>(exampleData);
@@ -625,6 +626,14 @@ export default function App() {
   const refreshSequence = useRef(0);
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferNotice, setTransferNotice] = useState("");
+  useEffect(() => {
+    const userId = window.sessionStorage.getItem("userid")?.trim() ?? "";
+    if (!userId) {
+      router.replace("/login");
+      return;
+    }
+    setUSER_ID(userId);
+  }, [router]);
   const closeTransfer = useCallback(() => setTransferOpen(false), []);
   const openTransfer = useCallback(() => { setTransferNotice(""); setTransferOpen(true); }, []);
   const onTransferCreated = useCallback((transaction: ExampleTransaction) => {
@@ -639,59 +648,73 @@ export default function App() {
   }, []);
 
   const refresh = useCallback(async (withReviews: boolean, force = false) => {
+    if (!USER_ID) {
+      router.replace("/login");
+      return;
+    }
     if (refreshController.current && !force) return;
     refreshController.current?.abort();
     const controller = new AbortController();
     refreshController.current = controller;
     const sequence = ++refreshSequence.current;
     try {
-      const [financialResponse, reviewsResponse] = await Promise.all([
-        fetch(`/api/users/${encodeURIComponent(DEMO_USER_ID)}/financial-data`, { signal: controller.signal, cache: "no-store" }),
-        withReviews ? fetch("/api/transfer/reviews", { signal: controller.signal, cache: "no-store" }) : Promise.resolve(null),
-      ]);
-      const body = await financialResponse.json() as FinancialDataResponse;
-      if (!financialResponse.ok || !body.ok) throw new Error(body.ok ? `Financial data request failed with status ${financialResponse.status}.` : body.error.message);
-      if (body.data.userId !== DEMO_USER_ID || !Array.isArray(body.data.assets) || !Array.isArray(body.data.transactions)
-        || !Array.isArray(body.data.policies) || !Array.isArray(body.data.nodes) || !Array.isArray(body.data.edges)) {
-        throw new Error("Financial data endpoint returned an invalid response.");
+      let body: FinancialDataResponse;
+      try {
+        const financialResponse = await fetch(`/api/users/${encodeURIComponent(USER_ID)}/financial-data`, { signal: controller.signal, cache: "no-store" });
+        body = await financialResponse.json() as FinancialDataResponse;
+        if (!financialResponse.ok || !body.ok) throw new Error(body.ok ? `Financial data request failed with status ${financialResponse.status}.` : body.error.message);
+        if (body.data.userId !== USER_ID || !Array.isArray(body.data.assets) || !Array.isArray(body.data.transactions)
+          || !Array.isArray(body.data.policies) || !Array.isArray(body.data.nodes) || !Array.isArray(body.data.edges)) {
+          throw new Error("Financial data endpoint returned an invalid response.");
+        }
+      } catch (error) {
+        if (controller.signal.aborted || sequence !== refreshSequence.current) return;
+        console.error("Unable to load financial data for the signed-in user.", error);
+        window.sessionStorage.removeItem("userid");
+        router.replace("/login");
+        return;
       }
-      let nextReviews: TransferReviews | null = null;
-      if (reviewsResponse) {
-        const reviewBody = await reviewsResponse.json() as ReviewsResponse;
-        if (!reviewsResponse.ok || !reviewBody.ok) throw new Error(reviewBody.ok ? "Unable to load transfer reviews." : reviewBody.error.message);
-        if (!Array.isArray(reviewBody.data.transfers) || !Array.isArray(reviewBody.data.audit)) throw new Error("Review endpoint returned an invalid response.");
-        nextReviews = reviewBody.data;
-      }
+
       if (controller.signal.aborted || sequence !== refreshSequence.current) return;
       setFinancialData({ assets: body.data.assets, transactions: body.data.transactions, policies: body.data.policies,
         nodes: body.data.nodes, edges: body.data.edges });
-      if (nextReviews) setReviews(nextReviews);
       setFinancialDataLoaded(true);
       setFinancialDataError("");
-      if (withReviews) setTwinRefreshError("");
-    } catch (error) {
-      if (controller.signal.aborted || sequence !== refreshSequence.current) return;
-      console.error("Unable to refresh demo financial data.", error);
-      if (withReviews) setTwinRefreshError("Unable to refresh requests. Showing last loaded data.");
-      else setFinancialDataError("Unable to load the demo inventory. Transfer requests are unavailable until data loads.");
+
+      if (withReviews) {
+        try {
+          const reviewsResponse = await fetch("/api/transfer/reviews", { signal: controller.signal, cache: "no-store" });
+          const reviewBody = await reviewsResponse.json() as ReviewsResponse;
+          if (!reviewsResponse.ok || !reviewBody.ok) throw new Error(reviewBody.ok ? "Unable to load transfer reviews." : reviewBody.error.message);
+          if (!Array.isArray(reviewBody.data.transfers) || !Array.isArray(reviewBody.data.audit)) throw new Error("Review endpoint returned an invalid response.");
+          if (controller.signal.aborted || sequence !== refreshSequence.current) return;
+          setReviews(reviewBody.data);
+          setTwinRefreshError("");
+        } catch (error) {
+          if (controller.signal.aborted || sequence !== refreshSequence.current) return;
+          console.error("Unable to refresh transfer reviews.", error);
+          setTwinRefreshError("Unable to refresh requests. Showing last loaded data.");
+        }
+      }
     } finally {
       if (refreshController.current === controller) refreshController.current = null;
     }
-  }, []);
+  }, [USER_ID, router]);
 
   useEffect(() => {
+    if (!USER_ID) return;
     void refresh(false, true);
     return () => refreshController.current?.abort();
-  }, [refresh]);
+  }, [USER_ID, refresh]);
 
   useEffect(() => {
-    if (page !== "Digital Twin") return;
+    if (!USER_ID || page !== "Digital Twin") return;
     void refresh(true, true);
     const onFocus = () => { void refresh(true); };
     window.addEventListener("focus", onFocus);
     const timer = window.setInterval(() => { if (!document.hidden) void refresh(true); }, 15_000);
     return () => { window.removeEventListener("focus", onFocus); window.clearInterval(timer); refreshController.current?.abort(); };
-  }, [page, refresh]);
+  }, [USER_ID, page, refresh]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -713,11 +736,13 @@ export default function App() {
   const pages: Record<Page, React.ReactNode> = {
     "Overview": <Overview data={financialData} onNewTransfer={openTransfer} />,
     "Digital Twin": <DigitalTwin data={financialData} reviews={reviews} refreshError={twinRefreshError} />,
-    "Portfolios": <Portfolios data={financialData} onOpenTwin={() => setPage("Digital Twin")} />,
+    "Portfolios": <Portfolios data={financialData} userId={USER_ID} onOpenTwin={() => setPage("Digital Twin")} />,
     "Transactions": <Transactions data={financialData} onNewTransfer={openTransfer} notice={transferNotice} />,
     "Policy Engine": <PolicyEngine data={financialData} onDecision={onPolicyDecision} />,
     "Reporting": <Reporting />,
   };
+  if (!USER_ID || !financialDataLoaded) return null;
+
   return (
     <div className="app-shell make-prototype" data-data-source="figma-demo-sample">
       <Rail page={page} setPage={setPage} />

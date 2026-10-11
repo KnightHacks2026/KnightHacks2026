@@ -118,10 +118,16 @@ export default function CustodyLogin() {
                   typeof result !== "object" ||
                   result === null ||
                   !("ok" in result) ||
-                  result.ok !== true
+                  result.ok !== true ||
+                  !("data" in result) ||
+                  typeof result.data !== "object" ||
+                  result.data === null ||
+                  !("userId" in result.data) ||
+                  typeof result.data.userId !== "string"
                 ) {
                   throw new Error("Login endpoint returned an invalid response.");
                 }
+                window.sessionStorage.setItem("userid", result.data.userId);
                 router.push("/");
               } catch {
                 setLoginError("Unable to sign in right now. Please try again.");

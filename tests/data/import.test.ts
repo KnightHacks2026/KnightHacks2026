@@ -73,6 +73,11 @@ describe("dataset import and retrieval", () => {
   });
 
   it("returns the requesting user's sample data and imported datasets", async () => {
+    const authenticationDatabase = new DatabaseSync(process.env.CUSTODYOS_DATABASE_PATH ?? "data/custodyos.sqlite");
+    authenticationDatabase.prepare(`
+      INSERT OR IGNORE INTO custody_authenticate (user_id, password, otp_secret)
+      VALUES (?, ?, ?)
+    `).run("demo-user", "0".repeat(64), "JBSWY3DPEHPK3PXP");
     const response = await financialDataRoute(new Request("http://localhost/api/users/demo-user/financial-data"), {
       params: Promise.resolve({ userId: "demo-user" }),
     });
@@ -85,13 +90,24 @@ describe("dataset import and retrieval", () => {
     expect(body.data.nodes).toHaveLength(8);
     expect(body.data.edges).toHaveLength(9);
     expect(body.data.datasets.map((dataset: { dataset: { id: string } }) => dataset.dataset.id)).toContain(datasetId);
-
-    const otherUserResponse = await financialDataRoute(new Request("http://localhost/api/users/another-user/financial-data"), {
-      params: Promise.resolve({ userId: "another-user" }),
+    const otherUserId = `authenticated-user-${crypto.randomUUID()}`;
+    authenticationDatabase.prepare(`
+      INSERT INTO custody_authenticate (user_id, password, otp_secret) VALUES (?, ?, ?)
+    `).run(otherUserId, "0".repeat(64), "JBSWY3DPEHPK3PXP");
+    const otherUserResponse = await financialDataRoute(new Request(`http://localhost/api/users/${otherUserId}/financial-data`), {
+      params: Promise.resolve({ userId: otherUserId }),
     });
     const otherUser = await otherUserResponse.json();
     expect(otherUser.data.datasets).toEqual([]);
     expect(otherUser.data.assets).toEqual([]);
+    authenticationDatabase.prepare("DELETE FROM custody_authenticate WHERE user_id = ?").run(otherUserId);
+    authenticationDatabase.close();
+
+    const unknownUserResponse = await financialDataRoute(new Request("http://localhost/api/users/unknown-user/financial-data"), {
+      params: Promise.resolve({ userId: "unknown-user" }),
+    });
+    expect(unknownUserResponse.status).toBe(401);
+    expect((await unknownUserResponse.json()).error.code).toBe("PERMISSION_DENIED");
   });
 
   it("rejects an empty user ID", async () => {
