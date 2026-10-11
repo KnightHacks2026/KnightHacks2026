@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { POST as transfer } from "../../src/app/api/transfer/route";
 import { GET as financialData } from "../../src/app/api/users/[userId]/financial-data/route";
 import { createAuthenticationUser, getExampleData } from "../../src/lib/data/repository";
+import { authenticatedRequest } from "../authenticated-request";
 
 const testUserId = "demo-user";
 
@@ -10,11 +11,11 @@ beforeAll(async () => {
   await createAuthenticationUser(testUserId, "0".repeat(64), "JBSWY3DPEHPK3PXP");
 });
 
-const request = (body: unknown) => transfer(new Request("http://localhost/api/transfer", {
+const request = async (body: unknown) => transfer(await authenticatedRequest("http://localhost/api/transfer", {
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify(body),
-}));
+}, typeof body === "object" && body !== null && "userId" in body && typeof body.userId === "string" ? body.userId : testUserId));
 
 const validTransfer = {
   contractVersion: "1.0.0",
@@ -44,7 +45,7 @@ describe("POST /api/transfer", () => {
     const after = await getExampleData(testUserId);
     expect(after.transactions[0]).toEqual(body.data.transaction);
     expect(after.assets).toEqual(before.assets);
-    const reload = await financialData(new Request(`http://localhost/api/users/${testUserId}/financial-data`), { params: Promise.resolve({ userId: testUserId }) });
+    const reload = await financialData(await authenticatedRequest(`http://localhost/api/users/${testUserId}/financial-data`), { params: Promise.resolve({ userId: testUserId }) });
     expect(reload.status).toBe(200);
     expect((await reload.json()).data.transactions[0]).toEqual(body.data.transaction);
   });

@@ -7,9 +7,10 @@ import { POST as explanationRoute } from "../../src/app/api/datasets/[datasetId]
 import { GET as recommendationsRoute } from "../../src/app/api/datasets/[datasetId]/recommendations/route";
 import { POST as importRoute } from "../../src/app/api/datasets/import/route";
 import { POST as simulationRoute } from "../../src/app/api/datasets/[datasetId]/simulations/route";
+import { authenticatedRequest } from "../authenticated-request";
 
 const context = { params: Promise.resolve({ datasetId: "dataset-cascade" }) };
-const post = (body: unknown, datasetId = "dataset-cascade") => explanationRoute(new Request(`http://localhost/api/datasets/${datasetId}/explanations`, { method: "POST", body: JSON.stringify(body) }), { params: Promise.resolve({ datasetId }) });
+const post = async (body: unknown, datasetId = "dataset-cascade") => explanationRoute(await authenticatedRequest(`http://localhost/api/datasets/${datasetId}/explanations`, { method: "POST", body: JSON.stringify(body) }), { params: Promise.resolve({ datasetId }) });
 
 describe("grounded settlement intelligence", () => {
   it("explains exact cash shortfall and dependency cascade from source evidence", async () => {
@@ -107,14 +108,14 @@ describe("grounded settlement intelligence", () => {
     expect((await simulation.json()).data.explanation.simulationResultId).toBe(result.id);
     const missing = await post({ ...body, datasetId: "unknown" }, "unknown");
     expect(missing.status).toBe(404);
-    const recommendations = await recommendationsRoute(new Request("http://localhost/api/datasets/dataset-cascade/recommendations"), context);
+    const recommendations = await recommendationsRoute(await authenticatedRequest("http://localhost/api/datasets/dataset-cascade/recommendations"), context);
     expect((await recommendations.json()).data.recommendations).toHaveLength(1);
-    const invalidVersion = await recommendationsRoute(new Request("http://localhost/api/datasets/dataset-cascade/recommendations?contractVersion=2.0.0"), context);
+    const invalidVersion = await recommendationsRoute(await authenticatedRequest("http://localhost/api/datasets/dataset-cascade/recommendations?contractVersion=2.0.0"), context);
     expect((await invalidVersion.json()).error.code).toBe("UNSUPPORTED_CONTRACT_VERSION");
-    const missingRecommendations = await recommendationsRoute(new Request("http://localhost/api/datasets/missing/recommendations"), { params: Promise.resolve({ datasetId: "missing" }) });
+    const missingRecommendations = await recommendationsRoute(await authenticatedRequest("http://localhost/api/datasets/missing/recommendations"), { params: Promise.resolve({ datasetId: "missing" }) });
     expect(missingRecommendations.status).toBe(404);
     expect((await missingRecommendations.json()).error.code).toBe("NOT_FOUND");
-    const malformed = await explanationRoute(new Request("http://localhost/api/datasets/dataset-cascade/explanations", { method: "POST", body: "{" }), context);
+    const malformed = await explanationRoute(await authenticatedRequest("http://localhost/api/datasets/dataset-cascade/explanations", { method: "POST", body: "{" }), context);
     expect(malformed.status).toBe(400);
     expect((await malformed.json()).error.code).toBe("INVALID_REQUEST");
   });
@@ -124,7 +125,7 @@ describe("grounded settlement intelligence", () => {
     const forged = await post(body);
     expect(forged.status).toBe(404);
     const oversized = { ...fullFundingScenario, interventions: [{ ...fullFundingScenario.interventions[0], amount: { currency: "USD", minorUnits: "3000000000" } }] };
-    const simulation = await simulationRoute(new Request("http://localhost/api/datasets/dataset-cascade/simulations", { method: "POST", body: JSON.stringify(oversized) }), context);
+    const simulation = await simulationRoute(await authenticatedRequest("http://localhost/api/datasets/dataset-cascade/simulations", { method: "POST", body: JSON.stringify(oversized) }), context);
     const result = (await simulation.json()).data.result;
     expect(result.status).toBe("invalid");
     const response = await post({ ...body, subject: { kind: "simulation", id: result.id }, simulationRequest: oversized });
@@ -146,7 +147,7 @@ describe("grounded settlement intelligence", () => {
     for (const key of ["institutions", "accounts", "instruments", "sourceRecords", "obligations", "dependencies"] as const) {
       for (const item of imported[key]) item.datasetId = importedId;
     }
-    const importedResponse = await importRoute(new Request("http://localhost/api/datasets/import", { method: "POST", body: JSON.stringify(imported) }));
+    const importedResponse = await importRoute(await authenticatedRequest("http://localhost/api/datasets/import", { method: "POST", body: JSON.stringify(imported) }));
     expect(importedResponse.status).toBe(201);
     const snapshotId = (await importedResponse.json()).data.snapshotId as string;
     const importedContext = { params: Promise.resolve({ datasetId: importedId }) };
@@ -154,10 +155,10 @@ describe("grounded settlement intelligence", () => {
     const explained = await post({ contractVersion: "1.0.0", datasetId: importedId, subject: { kind: "obligation", id: "obligation-1" } }, importedId);
     expect(explained.status).toBe(200);
     expect((await explained.json()).data.explanation.datasetId).toBe(importedId);
-    const recommendationResponse = await recommendationsRoute(new Request(`http://localhost/api/datasets/${importedId}/recommendations`), importedContext);
+    const recommendationResponse = await recommendationsRoute(await authenticatedRequest(`http://localhost/api/datasets/${importedId}/recommendations`), importedContext);
     expect(recommendationResponse.status).toBe(200);
     expect((await recommendationResponse.json()).data.recommendations[0].intervention.datasetId).toBe(importedId);
-    const simulated = await simulationRoute(new Request(`http://localhost/api/datasets/${importedId}/simulations`, { method: "POST", body: JSON.stringify(request) }), importedContext);
+    const simulated = await simulationRoute(await authenticatedRequest(`http://localhost/api/datasets/${importedId}/simulations`, { method: "POST", body: JSON.stringify(request) }), importedContext);
     const simulationId = (await simulated.json()).data.result.id as string;
     expect(simulationId).not.toBe(replayEvidence((await getSimulationDataset("dataset-cascade"))!, fullFundingScenario).id);
     const explainedSimulation = await post({ contractVersion: "1.0.0", datasetId: importedId, subject: { kind: "simulation", id: simulationId }, simulationRequest: request }, importedId);

@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { execFileSync } from "node:child_process";
-import { cascadeImport } from "../../src/contracts/fixtures";
+import { cascadeImport, fullFundingScenario } from "../../src/contracts/fixtures";
 import { POST as importRoute } from "../../src/app/api/datasets/import/route";
 import { GET as financialDataRoute } from "../../src/app/api/users/[userId]/financial-data/route";
 import { GET as workspace } from "../../src/app/api/datasets/[datasetId]/workspace/route";
 import { GET as twin } from "../../src/app/api/datasets/[datasetId]/twin/route";
 import { POST as simulate } from "../../src/app/api/datasets/[datasetId]/simulations/route";
 import { GET as custody } from "../../src/app/api/datasets/[datasetId]/custody/route";
+import { POST as transfer } from "../../src/app/api/transfer/route";
 import { getExampleData, getImportedDataset, saveExampleData } from "../../src/lib/data/repository";
 import { exampleData } from "../../src/contracts";
+import { authenticatedRequest } from "../authenticated-request";
 
 const datasetId = `import-route-test-${crypto.randomUUID()}`;
 const databasePath = process.env.CUSTODYOS_DATABASE_PATH;
@@ -23,7 +25,9 @@ const payload = (id = datasetId) => {
   }
   return copy;
 };
-const post = (body: unknown) => importRoute(new Request("http://localhost/api/datasets/import", { method: "POST", body: JSON.stringify(body) }));
+const post = async (body: unknown) => importRoute(await authenticatedRequest("http://localhost/api/datasets/import", {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+}));
 
 describe("dataset import and retrieval", () => {
   it("returns structured validation failures for references, identifiers, and inventory", async () => {
@@ -58,17 +62,17 @@ describe("dataset import and retrieval", () => {
     persisted.close();
     const fromNewProcess = execFileSync(process.execPath, ["-e", "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(process.argv[1]);process.stdout.write(String(db.prepare('SELECT COUNT(*) AS count FROM custody_snapshots WHERE user_id=? AND id=?').get(process.argv[2],process.argv[3]).count));db.close()", databasePath, "demo-user", body.data.snapshotId], { cwd: process.cwd(), encoding: "utf8" });
     expect(fromNewProcess).toBe("1");
-    const work = await (await workspace(new Request(`http://localhost/api/datasets/${datasetId}/workspace`), context)).json();
+    const work = await (await workspace(await authenticatedRequest(`http://localhost/api/datasets/${datasetId}/workspace`), context)).json();
     expect(work.data.snapshot).toEqual(source?.snapshot);
     expect(work.data.recentAuditEvents).toHaveLength(1);
-    const graph = await (await twin(new Request(`http://localhost/api/datasets/${datasetId}/twin`), context)).json();
+    const graph = await (await twin(await authenticatedRequest(`http://localhost/api/datasets/${datasetId}/twin`), context)).json();
     expect(graph.data.projection.obligations).toHaveLength(3);
     expect(graph.data.projection.datasetId).toBe(datasetId);
-    const assessment = await (await custody(new Request(`http://localhost/api/datasets/${datasetId}/custody`), context)).json();
+    const assessment = await (await custody(await authenticatedRequest(`http://localhost/api/datasets/${datasetId}/custody`), context)).json();
     expect(assessment.data.assessment.obligations).toHaveLength(3);
     const simulationRequest = { contractVersion: "1.0.0", datasetId, expectedDatasetRevision: "1", baseSnapshotId: body.data.snapshotId,
       interventions: [{ id: "fund-test", kind: "cash_transfer", datasetId, baseSnapshotId: body.data.snapshotId, expectedDatasetRevision: "1", rationale: "test", sourceAccountId: "acct-reserve", targetAccountId: "acct-a", amount: { currency: "USD", minorUnits: "1000000000" }, effectiveAt: "2026-10-09T13:05:00Z" }] };
-    const simulation = await (await simulate(new Request(`http://localhost/api/datasets/${datasetId}/simulations`, { method: "POST", body: JSON.stringify(simulationRequest) }), context)).json();
+    const simulation = await (await simulate(await authenticatedRequest(`http://localhost/api/datasets/${datasetId}/simulations`, { method: "POST", body: JSON.stringify(simulationRequest) }), context)).json();
     expect(simulation.data.result.status).toBe("valid");
     expect(simulation.data.result.comparison.newlySettledObligationIds).toHaveLength(3);
     expect((await getImportedDataset(datasetId))?.snapshot).toEqual(source?.snapshot);
@@ -80,7 +84,7 @@ describe("dataset import and retrieval", () => {
       INSERT OR IGNORE INTO custody_authenticate (user_id, password, otp_secret)
       VALUES (?, ?, ?)
     `).run("demo-user", "0".repeat(64), "JBSWY3DPEHPK3PXP");
-    const response = await financialDataRoute(new Request("http://localhost/api/users/demo-user/financial-data"), {
+    const response = await financialDataRoute(await authenticatedRequest("http://localhost/api/users/demo-user/financial-data"), {
       params: Promise.resolve({ userId: "demo-user" }),
     });
     expect(response.status).toBe(200);
@@ -96,12 +100,40 @@ describe("dataset import and retrieval", () => {
     authenticationDatabase.prepare(`
       INSERT INTO custody_authenticate (user_id, password, otp_secret) VALUES (?, ?, ?)
     `).run(otherUserId, "0".repeat(64), "JBSWY3DPEHPK3PXP");
-    const otherUserResponse = await financialDataRoute(new Request(`http://localhost/api/users/${otherUserId}/financial-data`), {
+    const otherUserResponse = await financialDataRoute(await authenticatedRequest(`http://localhost/api/users/${otherUserId}/financial-data`, {}, otherUserId), {
       params: Promise.resolve({ userId: otherUserId }),
     });
     const otherUser = await otherUserResponse.json();
     expect(otherUser.data.datasets).toEqual([]);
-    expect(otherUser.data.assets).toEqual([]);
+    expect(otherUser.data.assets).toHaveLength(5);
+    expect(otherUser.data.transactions).toHaveLength(5);
+    expect(otherUser.data.policies).toHaveLength(4);
+    expect(otherUser.data.nodes).toHaveLength(8);
+    expect(otherUser.data.edges).toHaveLength(9);
+
+    const otherUserContext = { params: Promise.resolve({ datasetId: "dataset-cascade" }) };
+    const twinResponse = await twin(await authenticatedRequest("http://localhost/api/datasets/dataset-cascade/twin", {}, otherUserId), otherUserContext);
+    expect(twinResponse.status).toBe(200);
+    expect((await twinResponse.json()).data.projection.obligations).toHaveLength(3);
+    const simulationResponse = await simulate(await authenticatedRequest("http://localhost/api/datasets/dataset-cascade/simulations", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(fullFundingScenario),
+    }, otherUserId), otherUserContext);
+    expect(simulationResponse.status).toBe(200);
+    expect((await simulationResponse.json()).data.result.comparison.newlySettledObligationIds).toHaveLength(3);
+    const transferResponse = await transfer(await authenticatedRequest("http://localhost/api/transfer", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contractVersion: "1.0.0", userId: otherUserId, assetType: "BTC", assetAmount: "1.25", assetSource: "Bitcoin", senderName: "Fresh account test" }),
+    }, otherUserId));
+    expect(transferResponse.status).toBe(201);
+    expect((await transferResponse.json()).data.transaction).toMatchObject({ asset: "BTC", status: "Pending approval" });
+
+    // A prior initialization marker must not prevent missing demo surfaces from
+    // being restored on a later request.
+    authenticationDatabase.prepare("DELETE FROM example_twin_edges WHERE user_id = ?").run(otherUserId);
+    authenticationDatabase.prepare("DELETE FROM example_twin_nodes WHERE user_id = ?").run(otherUserId);
+    expect((await getExampleData(otherUserId)).nodes).toHaveLength(8);
+    expect((await getExampleData(otherUserId)).edges).toHaveLength(9);
+    authenticationDatabase.prepare("DELETE FROM custody_sessions WHERE user_id = ?").run(otherUserId);
     authenticationDatabase.prepare("DELETE FROM custody_authenticate WHERE user_id = ?").run(otherUserId);
     authenticationDatabase.close();
 
@@ -162,11 +194,11 @@ describe("dataset import and retrieval", () => {
   });
 
   it("reports missing datasets and stale simulation revisions", async () => {
-    const missing = await workspace(new Request("http://localhost/api/datasets/missing/workspace"), { params: Promise.resolve({ datasetId: "missing" }) });
+    const missing = await workspace(await authenticatedRequest("http://localhost/api/datasets/missing/workspace"), { params: Promise.resolve({ datasetId: "missing" }) });
     expect(missing.status).toBe(404);
     expect((await missing.json()).error.code).toBe("NOT_FOUND");
     const source = await getImportedDataset(datasetId);
-    const response = await simulate(new Request(`http://localhost/api/datasets/${datasetId}/simulations`, { method: "POST", body: JSON.stringify({
+    const response = await simulate(await authenticatedRequest(`http://localhost/api/datasets/${datasetId}/simulations`, { method: "POST", body: JSON.stringify({
       contractVersion: "1.0.0", datasetId, expectedDatasetRevision: "2", baseSnapshotId: source?.snapshot.id,
       interventions: [{ id: "stale", kind: "cash_transfer", datasetId, baseSnapshotId: source?.snapshot.id, expectedDatasetRevision: "2", rationale: "test", sourceAccountId: "acct-reserve", targetAccountId: "acct-a", amount: { currency: "USD", minorUnits: "1000000000" }, effectiveAt: "2026-10-09T13:05:00Z" }],
     }) }), context);
