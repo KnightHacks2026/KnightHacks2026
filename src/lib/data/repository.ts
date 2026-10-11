@@ -11,6 +11,10 @@ let databasePromise: Promise<DatabaseSync> | undefined;
 const demoUserId = () => process.env.CUSTODYOS_DEMO_USER_ID ?? "demo-user";
 const legacyUserId = () => process.env.CUSTODYOS_LEGACY_USER_ID ?? "demo-user";
 
+export function getDemoUserId(): string {
+  return demoUserId();
+}
+
 const schema = `
   CREATE TABLE IF NOT EXISTS custody_authenticate (
     user_id TEXT NOT NULL PRIMARY KEY,
@@ -621,10 +625,9 @@ export async function decideTransfer(input: {
   }
 }
 
-export async function importDataset(data: ImportDatasetRequest): Promise<Extract<ImportDatasetResponse, { ok: true }>["data"]> {
+export async function importDataset(userId: string, data: ImportDatasetRequest): Promise<Extract<ImportDatasetResponse, { ok: true }>["data"]> {
   if (data.dataset.id === cascadeImport.dataset.id) throw new DatasetConflictError("The cascade fixture dataset ID is reserved.");
   const database = await getDatabase();
-  const userId = demoUserId();
   const createdAt = new Date().toISOString();
   const revision = "1" as const;
   const dataset: Dataset = { ...data.dataset, revision, createdAt, status: "ready" };

@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { GetExplanationResponse } from "@/contracts";
 import { apiError, apiSuccess } from "@/lib/api/envelope";
 import { readVersionedJson } from "@/lib/api/request";
+import { getAuthenticatedUser } from "@/lib/data/repository";
 import { baselineEvidence, custodyEvidence, explain, replayEvidence } from "@/lib/ai/intelligence";
 import { getSimulationDataset } from "@/lib/simulation/dataset";
 import { simulationRequestSchema } from "@/lib/simulation/request-schema";
@@ -19,6 +20,8 @@ const schema = z.strictObject({
 }).refine(value => value.subject.kind === "simulation" ? !!value.simulationRequest : !value.simulationRequest);
 
 export async function POST(request: Request, context: { params: Promise<{ datasetId: string }> }) {
+  const userId = await getAuthenticatedUser(request);
+  if (!userId) return apiError("PERMISSION_DENIED", "Sign in to request an explanation.", 401);
   const { datasetId } = await context.params;
   if (!datasetId) return apiError("INVALID_REQUEST", "A dataset ID is required.", 400);
   const parsed = await readVersionedJson(request);
@@ -26,7 +29,7 @@ export async function POST(request: Request, context: { params: Promise<{ datase
   const body = schema.safeParse(parsed.input);
   if (!body.success || body.data.datasetId !== datasetId) return apiError("INVALID_REQUEST", "Invalid explanation request.", 400);
   try {
-    const source = await getSimulationDataset(datasetId);
+    const source = await getSimulationDataset(datasetId, userId);
     if (!source) return apiError("NOT_FOUND", "Dataset not found.", 404);
     const simulationRequest = body.data.simulationRequest;
     if (simulationRequest) {

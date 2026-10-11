@@ -5,12 +5,13 @@ import { CONTRACT_VERSION, type CreateTransferResponse, type ExampleAsset, type 
 import { formatTransferAmount, normalizeTransferAmount, transferAmountCaret } from "./transfer-amount";
 
 interface TransferDialogProps {
+  userId: string;
   assets: ExampleAsset[];
   onClose: () => void;
   onCreated: (transaction: ExampleTransaction) => void;
 }
 
-export function TransferDialog({ assets, onClose, onCreated }: TransferDialogProps) {
+export function TransferDialog({ userId, assets, onClose, onCreated }: TransferDialogProps) {
   const [source, setSource] = useState("");
   const [amount, setAmount] = useState("");
   const [destination, setDestination] = useState("");
@@ -87,7 +88,7 @@ export function TransferDialog({ assets, onClose, onCreated }: TransferDialogPro
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           contractVersion: CONTRACT_VERSION,
-          userId: "demo-user",
+          userId,
           assetType: asset.symbol,
           assetAmount: normalizedAmount,
           assetSource: asset.symbol,

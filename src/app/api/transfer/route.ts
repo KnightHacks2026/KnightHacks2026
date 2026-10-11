@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { CONTRACT_VERSION, type CreateTransferRequest } from "@/contracts";
 import { apiError, apiSuccess } from "@/lib/api/envelope";
-import { createExampleTransfer } from "@/lib/data/repository";
+import { createExampleTransfer, getAuthenticatedUser } from "@/lib/data/repository";
 
 const transferRequestSchema: z.ZodType<CreateTransferRequest> = z.strictObject({
   contractVersion: z.literal(CONTRACT_VERSION),
@@ -15,6 +15,8 @@ const transferRequestSchema: z.ZodType<CreateTransferRequest> = z.strictObject({
 });
 
 export async function POST(request: Request) {
+  const userId = await getAuthenticatedUser(request);
+  if (!userId) return apiError("PERMISSION_DENIED", "Sign in before creating a transfer.", 401);
   let input: unknown;
   try {
     input = await request.json();
@@ -25,6 +27,9 @@ export async function POST(request: Request) {
   const parsed = transferRequestSchema.safeParse(input);
   if (!parsed.success) {
     return apiError("INVALID_REQUEST", "Invalid transfer request.", 400);
+  }
+  if (parsed.data.userId !== userId) {
+    return apiError("PERMISSION_DENIED", "You cannot create a transfer for another user.", 403);
   }
 
   const result = await createExampleTransfer(parsed.data);

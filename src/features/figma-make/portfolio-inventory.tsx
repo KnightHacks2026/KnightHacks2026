@@ -95,6 +95,58 @@ export function CategorizedInventory({ view, datasets }: { view: Exclude<Invento
   </section>;
 }
 
+export function ConsolidatedInventory({ datasets }: { datasets: PortfolioDataset[] }) {
+  const source = [...datasets].sort((left, right) => Date.parse(right.snapshot.asOf) - Date.parse(left.snapshot.asOf))[0];
+  if (!source) return <div className="portfolio-empty" role="status"><h2>No imported custody snapshot</h2><p>Import a financial dataset to see verified account balances and settlement obligations. Market value and assets under custody require pricing data that is not present in the current snapshot contract.</p></div>;
+
+  const { snapshot, accounts, instruments } = source;
+  const accountNames = new Map(accounts.map(account => [account.id, account.name]));
+  const usdMinor = snapshot.cashBalances.filter(balance => balance.currency === "USD")
+    .reduce((sum, balance) => sum + BigInt(balance.settledMinorUnits), 0n);
+  const openObligations = snapshot.obligations.filter(item => item.status !== "settled" && item.status !== "cancelled");
+  const usdFormatter = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+  const balanceRows = [
+    ...snapshot.cashBalances.map(balance => ({
+      id: `cash:${balance.accountId}:${balance.currency}`,
+      account: accountNames.get(balance.accountId) ?? balance.accountId,
+      type: `Cash · ${balance.currency}`,
+      settled: balance.currency === "USD"
+        ? `${exactUnits(balance.settledMinorUnits, 2)} USD`
+        : `${balance.settledMinorUnits} ${balance.currency} minor units`,
+      reserved: balance.currency === "USD"
+        ? `${exactUnits(balance.reservedMinorUnits, 2)} USD`
+        : `${balance.reservedMinorUnits} minor units`,
+    })),
+    ...snapshot.securitiesBalances.map(balance => {
+      const instrument = instruments.find(item => item.id === balance.instrumentId);
+      return {
+        id: `security:${balance.accountId}:${balance.instrumentId}`,
+        account: accountNames.get(balance.accountId) ?? balance.accountId,
+        type: `Security · ${instrument?.symbol ?? balance.instrumentId}`,
+        settled: `${exactUnits(balance.settledUnits, instrument?.quantityScale ?? 0)} ${instrument?.symbol ?? "units"}`,
+        reserved: `${exactUnits(balance.reservedUnits, instrument?.quantityScale ?? 0)} ${instrument?.symbol ?? "units"}`,
+      };
+    }),
+  ];
+
+  return <section className="portfolio-category" aria-label="Consolidated imported custody inventory">
+    <div className="portfolio-category__metrics">
+      <div><span>USD SETTLED CASH</span><strong>{usdFormatter.format(usdMinor / 100n)}</strong></div>
+      <div><span>ACCOUNTS</span><strong>{accounts.length}</strong></div>
+      <div><span>OPEN OBLIGATIONS</span><strong>{openObligations.length}</strong></div>
+      <div><span>SNAPSHOT AS OF</span><strong>{new Date(snapshot.asOf).toLocaleString()}</strong></div>
+    </div>
+    <p className="portfolio-category__note">{source.dataset.name} · {balanceRows.length} imported balance entries. Market value is unavailable because this snapshot has no instrument prices.</p>
+    <div className="portfolio-category__head"><span>ACCOUNT / DATASET</span><span>BALANCE TYPE</span><span>SETTLED / RESERVED</span></div>
+    {balanceRows.map(row => <div className="portfolio-category__row" key={row.id}>
+      <div><strong>{row.account}</strong><small>{source.dataset.name} · {snapshot.id}</small></div>
+      <span>{row.type}</span>
+      <div><p>{row.settled} settled<small>{row.reserved} reserved</small></p></div>
+    </div>)}
+    {!balanceRows.length && <p className="portfolio-category__note">This imported snapshot contains no cash or securities balance entries.</p>}
+  </section>;
+}
+
 function InventoryEmpty({ view, eyebrow, title, description, source }: {
   view: Exclude<InventoryView, "Consolidated">;
   eyebrow: string;

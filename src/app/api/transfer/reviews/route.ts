@@ -1,7 +1,8 @@
-import { apiSuccess } from "@/lib/api/envelope";
-import { getTransferReviews } from "@/lib/data/repository";
+import { apiError, apiSuccess } from "@/lib/api/envelope";
+import { getAuthenticatedUser, getTransferReviews } from "@/lib/data/repository";
 
-/** Local demo only. This endpoint has no authenticated identity or institutional role. */
-export async function GET() {
-  return apiSuccess(await getTransferReviews());
+export async function GET(request: Request) {
+  const userId = await getAuthenticatedUser(request);
+  if (!userId) return apiError("PERMISSION_DENIED", "Sign in to view transfer reviews.", 401);
+  return apiSuccess(await getTransferReviews(userId));
 }
