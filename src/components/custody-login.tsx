@@ -3,6 +3,7 @@
 import { sha256 } from "js-sha256";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import QRCode from "qrcode";
 import { cascadeImport } from "../contracts/fixtures/twin-cascade";
 import styles from "./custody-login.module.css";
 
@@ -32,6 +33,17 @@ const previewPassword = "********";
 
 type RegistrationStep = "login" | "details" | "mfa";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function apiErrorMessage(result: unknown, fallback: string): string {
+  if (isRecord(result) && isRecord(result.error) && typeof result.error.message === "string") {
+    return result.error.message;
+  }
+  return fallback;
+}
+
 export default function CustodyLogin() {
   const router = useRouter();
   const [activeLeg, setActiveLeg] = useState(0);
@@ -42,7 +54,15 @@ export default function CustodyLogin() {
   const [loginError, setLoginError] = useState("");
   const [registrationStep, setRegistrationStep] = useState<RegistrationStep>("login");
   const [manualCodeVisible, setManualCodeVisible] = useState(false);
-  const [registrationNotice, setRegistrationNotice] = useState("");
+  const [registrationId, setRegistrationId] = useState("");
+  const [registrationUsername, setRegistrationUsername] = useState("");
+  const [registrationSecret, setRegistrationSecret] = useState("");
+  const [registrationExpiresAt, setRegistrationExpiresAt] = useState("");
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState("");
+  const [registrationError, setRegistrationError] = useState("");
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [isGeneratingQr, setIsGeneratingQr] = useState(false);
+  const [isVerifyingRegistration, setIsVerifyingRegistration] = useState(false);
 
   useEffect(() => {
     const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -78,6 +98,20 @@ export default function CustodyLogin() {
     }, 105);
     return () => window.clearInterval(timer);
   }, [previewPaused]);
+
+  async function generateRegistrationQrCode(username: string, secret: string) {
+    const otpAuthUri = `otpauth://totp/CustodyOS:${encodeURIComponent(username)}?secret=${encodeURIComponent(secret)}&issuer=CustodyOS`;
+    setIsGeneratingQr(true);
+    setRegistrationError("");
+    try {
+      setQrCodeDataUrl(await QRCode.toDataURL(otpAuthUri, { width: 251, margin: 1 }));
+    } catch {
+      setQrCodeDataUrl("");
+      setRegistrationError("Unable to generate the authenticator QR code. You can still use the manual setup key.");
+    } finally {
+      setIsGeneratingQr(false);
+    }
+  }
 
   return (
     <main className={styles.screen}>
@@ -175,11 +209,51 @@ export default function CustodyLogin() {
             <form
               className={`${styles.loginForm} ${styles.registrationForm}`}
               autoComplete="off"
-              onSubmit={(event) => {
+              onSubmit={async (event) => {
                 event.preventDefault();
+                if (isRegistering) return;
+
+                const formData = new FormData(event.currentTarget);
+                const username = String(formData.get("registration-email") ?? "").trim();
+                const password = String(formData.get("registration-password") ?? "");
+
+                setIsRegistering(true);
+                setRegistrationError("");
                 setManualCodeVisible(false);
-                setRegistrationNotice("");
-                setRegistrationStep("mfa");
+                setQrCodeDataUrl("");
+                try {
+                  const response = await fetch("/api/users/register", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ username, password: sha256(password) }),
+                  });
+                  const result: unknown = await response.json();
+                  if (!response.ok) {
+                    setRegistrationError(apiErrorMessage(result, "Unable to start registration. Please try again."));
+                    return;
+                  }
+                  if (
+                    !isRecord(result) ||
+                    result.ok !== true ||
+                    !isRecord(result.data) ||
+                    typeof result.data.registrationId !== "string" ||
+                    typeof result.data.otpSecret !== "string" ||
+                    typeof result.data.expiresAt !== "string"
+                  ) {
+                    throw new Error("Registration endpoint returned an invalid response.");
+                  }
+
+                  setRegistrationId(result.data.registrationId);
+                  setRegistrationUsername(username);
+                  setRegistrationSecret(result.data.otpSecret);
+                  setRegistrationExpiresAt(result.data.expiresAt);
+                  setRegistrationStep("mfa");
+                  await generateRegistrationQrCode(username, result.data.otpSecret);
+                } catch {
+                  setRegistrationError("Unable to start registration right now. Check your connection and try again.");
+                } finally {
+                  setIsRegistering(false);
+                }
               }}
             >
               <label className={styles.field}>
@@ -190,8 +264,9 @@ export default function CustodyLogin() {
                 <span>PASSWORD</span>
                 <input type="password" name="registration-password" autoComplete="new-password" placeholder="Enter a sample password" minLength={8} required />
               </label>
-              <button className={styles.enterButton} type="submit">
-                Sign up <span aria-hidden="true">→</span>
+              {registrationError && <p className={styles.loginError} role="alert">{registrationError}</p>}
+              <button className={styles.enterButton} type="submit" disabled={isRegistering}>
+                {isRegistering ? "Creating registration…" : "Sign up"} <span aria-hidden="true">→</span>
               </button>
             </form>
 
@@ -206,13 +281,19 @@ export default function CustodyLogin() {
             <h1 id="access-title">Register MFA</h1>
             <div className={styles.mfaCard}>
               <div className={styles.qrSection}>
-                <img
-                  className={styles.qrImage}
-                  src="/images/custodyos-register-qr.png"
-                  width="251"
-                  height="251"
-                  alt="Sample authenticator QR code for visual preview only"
-                />
+                {qrCodeDataUrl ? (
+                  <img
+                    className={styles.qrImage}
+                    src={qrCodeDataUrl}
+                    width="251"
+                    height="251"
+                    alt={`Authenticator QR code for ${registrationUsername}`}
+                  />
+                ) : (
+                  <div className={styles.qrPlaceholder} role="status">
+                    {isGeneratingQr ? "Generating authenticator QR code…" : "QR code unavailable"}
+                  </div>
+                )}
                 <button
                   className={styles.manualCodeButton}
                   type="button"
@@ -222,17 +303,49 @@ export default function CustodyLogin() {
                   {manualCodeVisible ? "Hide manual code" : "Show manual code"}
                 </button>
                 {manualCodeVisible && (
-                  <p className={styles.manualCodeNote}>
-                    Manual setup is unavailable in this visual-only preview.
-                  </p>
+                  <div className={styles.manualCode}>
+                    <span>SETUP KEY</span>
+                    <code>{registrationSecret}</code>
+                  </div>
                 )}
               </div>
 
               <form
                 className={styles.mfaForm}
-                onSubmit={(event) => {
+                onSubmit={async (event) => {
                   event.preventDefault();
-                  setRegistrationNotice("This visual preview is not connected to account creation. No account was created.");
+                  if (isVerifyingRegistration) return;
+
+                  const formData = new FormData(event.currentTarget);
+                  const otpCode = String(formData.get("registration-otp") ?? "");
+                  setIsVerifyingRegistration(true);
+                  setRegistrationError("");
+                  try {
+                    const response = await fetch("/api/users/register/verify", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ registrationId, otpCode }),
+                    });
+                    const result: unknown = await response.json();
+                    if (!response.ok) {
+                      setRegistrationError(apiErrorMessage(result, "Unable to verify your authenticator code. Please try again."));
+                      return;
+                    }
+                    if (
+                      !isRecord(result) ||
+                      result.ok !== true ||
+                      !isRecord(result.data) ||
+                      typeof result.data.userId !== "string"
+                    ) {
+                      throw new Error("Registration verification endpoint returned an invalid response.");
+                    }
+                    window.sessionStorage.setItem("userid", result.data.userId);
+                    router.push("/");
+                  } catch {
+                    setRegistrationError("Unable to verify your authenticator code right now. Check your connection and try again.");
+                  } finally {
+                    setIsVerifyingRegistration(false);
+                  }
                 }}
               >
                 <label className={styles.field}>
@@ -248,14 +361,14 @@ export default function CustodyLogin() {
                     required
                   />
                 </label>
-                <button className={`${styles.enterButton} ${styles.mfaSubmit}`} type="submit">
-                  Submit
+                {registrationError && <p className={styles.loginError} role="alert">{registrationError}</p>}
+                <button className={`${styles.enterButton} ${styles.mfaSubmit}`} type="submit" disabled={isVerifyingRegistration || !registrationId}>
+                  {isVerifyingRegistration ? "Verifying…" : "Submit"}
                 </button>
-                {registrationNotice && <p className={styles.mfaNotice} role="status">{registrationNotice}</p>}
               </form>
             </div>
             <p className={styles.mfaPreviewNote}>
-              Visual preview only; no account or MFA setup is created.
+              Registration expires {registrationExpiresAt ? new Date(registrationExpiresAt).toLocaleTimeString() : "soon"}.
             </p>
             <button className={styles.mfaBack} type="button" onClick={() => setRegistrationStep("details")}>
               Back to account details
