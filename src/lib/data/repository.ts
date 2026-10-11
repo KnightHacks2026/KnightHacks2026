@@ -127,6 +127,16 @@ const schema = `
     rule TEXT NOT NULL, state TEXT NOT NULL, coverage REAL NOT NULL,
     PRIMARY KEY(user_id, name), UNIQUE(user_id, position)
   );
+  CREATE TABLE IF NOT EXISTS example_policy_rules (
+    user_id TEXT NOT NULL, policy_name TEXT NOT NULL, rule_type TEXT NOT NULL,
+    asset TEXT NOT NULL DEFAULT 'ANY', threshold TEXT NOT NULL, action TEXT NOT NULL,
+    PRIMARY KEY(user_id, policy_name),
+    FOREIGN KEY(user_id, policy_name) REFERENCES example_policies(user_id, name)
+  );
+  CREATE TABLE IF NOT EXISTS example_policy_audit (
+    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, policy_name TEXT NOT NULL,
+    occurred_at TEXT NOT NULL, action TEXT NOT NULL, details TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS example_twin_nodes (
     user_id TEXT NOT NULL, position INTEGER NOT NULL, id TEXT NOT NULL, x REAL NOT NULL, y REAL NOT NULL,
     r REAL NOT NULL, sub TEXT NOT NULL, type TEXT NOT NULL,
@@ -148,6 +158,11 @@ async function openDatabase(): Promise<DatabaseSync> {
   const connection = new DatabaseSync(databasePath);
   connection.exec("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
   connection.exec(schema);
+  const policyRuleColumns = connection.prepare("PRAGMA table_info(example_policy_rules)").all()
+    .map(column => String(column.name));
+  if (!policyRuleColumns.includes("asset")) {
+    connection.exec("ALTER TABLE example_policy_rules ADD COLUMN asset TEXT NOT NULL DEFAULT 'ANY'");
+  }
   seedExampleData(connection, demoUserId());
   return connection;
 }
@@ -185,6 +200,7 @@ export class DatasetConflictError extends Error {}
 
 function writeExampleData(database: DatabaseSync, userId: string, data: ExampleData) {
   database.prepare("DELETE FROM example_twin_edges WHERE user_id = ?").run(userId);
+  database.prepare("DELETE FROM example_policy_rules WHERE user_id = ?").run(userId);
   for (const table of ["example_assets", "example_transactions", "example_policies", "example_twin_nodes"] as const) {
     database.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(userId);
   }
@@ -229,6 +245,44 @@ export async function getExampleData(userId = demoUserId()): Promise<ExampleData
   const edges = database.prepare("SELECT source, target FROM example_twin_edges WHERE user_id = ? ORDER BY position").all(userId)
     .map(row => [String(row.source), String(row.target)] as [string, string]);
   return { assets, transactions, policies, nodes, edges };
+}
+
+export async function createExamplePolicy(input: {
+  userId: string;
+  name: string;
+  scope: string;
+  rule: string;
+  asset: string;
+  threshold: string;
+}) {
+  const database = await getDatabase();
+  const position = Number((database.prepare(
+    "SELECT COALESCE(MAX(position), -1) + 1 AS position FROM example_policies WHERE user_id = ?"
+  ).get(input.userId) as { position: number }).position);
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    database.prepare(`INSERT INTO example_policies (user_id, position, name, scope, rule, state, coverage)
+      VALUES (?, ?, ?, ?, ?, 'Enforced', 100)`).run(input.userId, position, input.name, input.scope, input.rule);
+    database.prepare(`INSERT INTO example_policy_rules
+      (user_id, policy_name, rule_type, asset, threshold, action) VALUES (?, ?, 'amount_threshold', ?, ?, 'human_approval')`)
+      .run(input.userId, input.name, input.asset, input.threshold);
+    database.prepare(`INSERT INTO example_policy_audit
+      (id, user_id, policy_name, occurred_at, action, details) VALUES (?, ?, ?, ?, 'created', ?)`)
+      .run(`policy-audit-${randomUUID()}`, input.userId, input.name, new Date().toISOString(), JSON.stringify({ asset: input.asset, threshold: input.threshold, state: "Enforced" }));
+    database.exec("COMMIT");
+  } catch (error) { database.exec("ROLLBACK"); throw error; }
+  return { name: input.name, scope: input.scope, rule: input.rule, state: "Enforced", coverage: 100 };
+}
+
+export async function setExamplePolicyState(userId: string, name: string, state: "Enforced" | "Disabled") {
+  const database = await getDatabase();
+  const changed = database.prepare("UPDATE example_policies SET state = ? WHERE user_id = ? AND name = ?")
+    .run(state, userId, name);
+  if (changed.changes !== 1) return null;
+  database.prepare(`INSERT INTO example_policy_audit
+    (id, user_id, policy_name, occurred_at, action, details) VALUES (?, ?, ?, ?, 'state_changed', ?)`)
+    .run(`policy-audit-${randomUUID()}`, userId, name, new Date().toISOString(), JSON.stringify({ state }));
+  return state;
 }
 
 export async function saveExampleData(data: ExampleData): Promise<void> {
@@ -326,6 +380,13 @@ function sourceOwned(database: DatabaseSync, transfer: ReviewTransfer): boolean 
     .get(transfer.userId, transfer.asset));
 }
 
+function amountPolicies(database: DatabaseSync, userId: string) {
+  return database.prepare(`SELECT p.name, r.asset, r.threshold FROM example_policy_rules r
+    JOIN example_policies p ON p.user_id = r.user_id AND p.name = r.policy_name
+    WHERE r.user_id = ? AND r.rule_type = 'amount_threshold' AND p.state = 'Enforced' ORDER BY p.position`)
+    .all(userId).map(row => ({ name: String(row.name), asset: String(row.asset), threshold: String(row.threshold) }));
+}
+
 export async function getTransferReviews(userId = demoUserId()) {
   const database = await getDatabase();
   const transfers = database.prepare(`SELECT r.* FROM example_transfer_requests r
@@ -338,7 +399,8 @@ export async function getTransferReviews(userId = demoUserId()) {
     reason: String(row.reason), evaluation: JSON.parse(String(row.evaluation_json)) as PolicyEvaluation,
     revisionBefore: Number(row.revision_before), revisionAfter: Number(row.revision_after),
   }));
-  return { transfers: transfers.map(transfer => ({ ...transfer, evaluation: evaluateTransfer(transfer, sourceOwned(database, transfer)) })), audit };
+  const policies = amountPolicies(database, userId);
+  return { transfers: transfers.map(transfer => ({ ...transfer, evaluation: evaluateTransfer(transfer, sourceOwned(database, transfer), policies) })), audit };
 }
 
 export async function decideTransfer(input: {
@@ -358,7 +420,7 @@ export async function decideTransfer(input: {
     if (transfer.status !== "Pending approval" || transfer.revision !== input.expectedRevision) {
       database.exec("ROLLBACK"); return { ok: false, reason: "CONFLICT" };
     }
-    const evaluation = evaluateTransfer(transfer, sourceOwned(database, transfer));
+    const evaluation = evaluateTransfer(transfer, sourceOwned(database, transfer), amountPolicies(database, input.userId));
     if (input.decision === "approve" && !evaluation.canApprove) {
       database.exec("ROLLBACK"); return { ok: false, reason: "EVIDENCE_REQUIRED" };
     }

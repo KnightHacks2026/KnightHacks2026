@@ -347,7 +347,18 @@ h1 { margin-bottom: 4px; font: 400 29px/1.12 "Newsreader", serif; letter-spacing
 .transfer-notice { padding: 12px 15px; margin: 0 0 16px; border: 1px solid #b7a4c9; background: #f2ecf7; color: #4e3569; font-size: 11px; }
 .transfer-actions { display: flex; justify-content: end; gap: 9px; margin-top: 25px; }
 .transfer-actions .button:disabled { opacity: .6; cursor: wait; }
+.policy-dialog { width: min(580px, 100%); }
+.policy-rule-fields { display: grid; grid-template-columns: 1.1fr .9fr; gap: 12px; }
+.policy-rule-fields > div { display: grid; }
+.policy-preview { display: grid; grid-template-columns: 1fr auto; gap: 5px 16px; margin-top: 20px; padding: 14px; border: 1px solid var(--line); background: #f4f0f6; }
+.policy-preview span { color: var(--muted); font: 8px "IBM Plex Mono"; letter-spacing: .1em; }
+.policy-preview strong { color: var(--gold); font: 10px "IBM Plex Mono"; }
+.policy-preview small { grid-column: 1 / -1; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.policy-state-control { display: flex; align-items: center; gap: 12px; }
+.policy-state-control > span { color: var(--green); font: 9px "IBM Plex Mono"; }
+.policy-state-control .button { min-width: 76px; height: 32px; }
 @media (max-width: 760px) { .transfer-dialog { padding: 21px; } .transfer-actions { flex-wrap: wrap; } }
+@media (max-width: 560px) { .policy-rule-fields { grid-template-columns: 1fr; gap: 0; } }
 
 .policy-review { margin-top: 22px; border: 1px solid var(--line); }
 .policy-review-heading { padding: 22px 24px; display: flex; align-items: end; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--line); }

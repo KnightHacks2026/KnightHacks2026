@@ -15,10 +15,16 @@ describe("local demo policy evaluation", () => {
     expect(result.checks[3].mandatory).toBe(false);
   });
 
-  it("blocks over-limit and absent-source requests", () => {
-    expect(evaluateTransfer({ ...transfer, amount: "10.0001" }, true).checks[1].result).toBe("Failed");
-    expect(evaluateTransfer({ ...transfer, amount: "9.999999999999999999" }, true).canApprove).toBe(true);
+  it("accepts positive amounts and blocks absent-source requests", () => {
+    expect(evaluateTransfer({ ...transfer, amount: "5000000" }, true).checks[1].result).toBe("Passed");
+    expect(evaluateTransfer({ ...transfer, amount: "0" }, true).checks[1].result).toBe("Failed");
     expect(evaluateTransfer(transfer, false).canApprove).toBe(false);
+  });
+
+  it("matches thresholds only for the configured asset", () => {
+    const policies = [{ name: "BTC threshold", asset: "BTC", threshold: "4" }];
+    expect(evaluateTransfer({ ...transfer, amount: "5" }, true, policies).checks.at(-1)?.result).toBe("Approval required");
+    expect(evaluateTransfer({ ...transfer, asset: "USDC", amount: "5000000" }, true, policies).checks).toHaveLength(4);
   });
 
   it("requires evidence for destinations outside the synthetic fixture", () => {

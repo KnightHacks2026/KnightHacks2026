@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { exampleData, type ExampleData, type ExampleTransaction } from "@/contracts";
+import { exampleData, type ExampleData, type ExamplePolicy, type ExampleTransaction } from "@/contracts";
 import { TransferDialog } from "./transfer-dialog";
 import { PolicyReview } from "./policy-review";
 import { formatLedgerAmount } from "./ledger-amount";
@@ -39,6 +39,10 @@ type FinancialDataResponse =
 
 type ReviewsResponse =
   | { ok: true; data: TransferReviews }
+  | { ok: false; error: { message: string } };
+
+type CreatePolicyResponse =
+  | { ok: true; data: { policy: ExamplePolicy } }
   | { ok: false; error: { message: string } };
 
 type ReconciliationException = {
@@ -536,20 +540,64 @@ function Transactions({ data, onNewTransfer, notice }: { data: ExampleData; onNe
   );
 }
 
-function PolicyEngine({ data, onDecision }: { data: ExampleData; onDecision: (id: string, status: ExampleTransaction["status"]) => void }) {
+function CreatePolicyDialog({ userId, assets, onClose, onCreated }: { userId: string; assets: ExampleData["assets"]; onClose: () => void; onCreated: (policy: ExamplePolicy) => void }) {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setSubmitting(true); setError("");
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch("/api/policies", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        userId, name: form.get("name"), asset: form.get("asset"), threshold: form.get("threshold"),
+      }) });
+      const body = await response.json() as CreatePolicyResponse;
+      if (!response.ok || !body.ok) throw new Error(body.ok ? "Unable to create policy." : body.error.message);
+      onCreated(body.data.policy);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to create policy."); }
+    finally { setSubmitting(false); }
+  }
+  return <div className="transfer-overlay" onMouseDown={onClose}><section className="transfer-dialog policy-dialog" role="dialog" aria-modal="true" aria-labelledby="create-policy-title" onMouseDown={event => event.stopPropagation()}>
+    <div className="transfer-dialog-head"><div><p className="eyebrow">POLICY ENGINE / NEW CONTROL</p><h2 id="create-policy-title">Create policy</h2></div><button className="transfer-close" onClick={onClose} aria-label="Close">×</button></div>
+    <p className="transfer-explainer">Require an explicit human decision when a new transfer exceeds an asset amount threshold. The server evaluates this rule for every new transfer.</p>
+    <form onSubmit={submit}>
+      <label htmlFor="policy-name">Policy name</label><input id="policy-name" name="name" placeholder="Large transfer approval" required minLength={3} disabled={submitting} />
+      <label htmlFor="policy-scope">Scope</label><input id="policy-scope" value="All new transfers" disabled />
+      <label htmlFor="policy-asset">Asset</label><select id="policy-asset" name="asset" disabled={submitting}>{assets.filter(asset => asset.symbol !== "OTHER").map(asset => <option key={asset.symbol} value={asset.symbol}>{asset.symbol} · {asset.name}</option>)}</select>
+      <label htmlFor="policy-threshold">Asset amount threshold</label><input id="policy-threshold" name="threshold" inputMode="decimal" placeholder="5" pattern="\d+(\.\d+)?" required disabled={submitting} />
+      <label htmlFor="policy-action">Action</label><input id="policy-action" value="Require human approval" disabled />
+      <div className="policy-preview"><span>DEPLOYMENT STATE</span><strong>Enforced on save</strong><small>Matching transfers remain pending until an operator approves or rejects them. The policy match is recorded with the decision.</small></div>
+      {error && <p className="transfer-error" role="alert">{error}</p>}
+      <div className="transfer-actions"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={submitting}>{submitting ? "Saving…" : "Save policy"}</button></div>
+    </form>
+  </section></div>;
+}
+
+function PolicyEngine({ data, userId, onDecision, onPolicyCreated }: { data: ExampleData; userId: string; onDecision: (id: string, status: ExampleTransaction["status"]) => void; onPolicyCreated: (policy: ExamplePolicy) => void }) {
   const [selected, setSelected] = useState(0);
+  const [creating, setCreating] = useState(false);
   const policies = data.policies;
   const selectedPolicyIndex = Math.min(selected, Math.max(0, policies.length - 1));
+  const [stateError, setStateError] = useState("");
+  async function togglePolicy() {
+    const policy = policies[selectedPolicyIndex];
+    if (!policy) return;
+    const state = policy.state === "Enforced" ? "Disabled" : "Enforced";
+    setStateError("");
+    const response = await fetch(`/api/policies/${encodeURIComponent(policy.name)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId, state }) });
+    const body = await response.json() as { ok: boolean; error?: { message: string } };
+    if (!response.ok || !body.ok) return setStateError(body.error?.message ?? "Unable to update policy.");
+    onPolicyCreated({ ...policy, state });
+  }
   return (
     <main className="page policy-page">
-      <PageHeading eyebrow="CONTROL PLANE / POLICY ENGINE" title="Programmable Governance" description="Authorization logic mapped directly to entities, wallets, transaction types, and risk limits." actions={<button className="button primary">Create policy</button>} />
+      <PageHeading eyebrow="CONTROL PLANE / POLICY ENGINE" title="Programmable Governance" description="Authorization logic mapped directly to entities, wallets, transaction types, and risk limits." actions={<button className="button primary" onClick={() => setCreating(true)}>Create policy</button>} />
       <div className="policy-workbench">
         <section className="policy-list">
-          <div className="policy-list-title"><p className="eyebrow">POLICY LIBRARY</p><span>{policies.length} SAMPLE POLICIES</span></div>
+          <div className="policy-list-title"><p className="eyebrow">POLICY LIBRARY</p><span>{policies.length} POLICIES</span></div>
           {policies.map((policy, i) => <button onClick={() => setSelected(i)} className={selectedPolicyIndex === i ? "active" : ""} key={policy.name}><span><strong>{policy.name}</strong><small>{policy.scope}</small></span><em>{policy.state}</em></button>)}
         </section>
         <section className="policy-canvas">
-          {policies.length > 0 && <><div className="policy-canvas-head"><div><p className="eyebrow">POLICY / POL-00{selectedPolicyIndex + 1}</p><h2>{policies[selectedPolicyIndex].name}</h2></div><span className={policies[selectedPolicyIndex].state === "Review" ? "review" : ""}>● {policies[selectedPolicyIndex].state}</span></div>
+          {policies.length > 0 && <><div className="policy-canvas-head"><div><p className="eyebrow">POLICY / POL-00{selectedPolicyIndex + 1}</p><h2>{policies[selectedPolicyIndex].name}</h2></div><div className="policy-state-control"><span className={policies[selectedPolicyIndex].state === "Review" ? "review" : ""}>● {policies[selectedPolicyIndex].state}</span><button className="button secondary" onClick={togglePolicy}>{policies[selectedPolicyIndex].state === "Enforced" ? "Disable" : "Enable"}</button></div></div>
           <div className="logic-flow">
             <div className="logic-node"><span>WHEN</span><strong>Transaction initiated</strong><small>{policies[selectedPolicyIndex].scope}</small></div><i />
             <div className="logic-node"><span>CHECK</span><strong>Risk & compliance</strong><small>Sanctions · velocity · allowlist</small></div><i />
@@ -557,9 +605,11 @@ function PolicyEngine({ data, onDecision }: { data: ExampleData; onDecision: (id
             <div className="logic-node"><span>ENFORCE</span><strong>{policies[selectedPolicyIndex].rule.split(" · ")[1] || "Verified route"}</strong><small>Block on policy exception</small></div>
           </div>
           <div className="policy-metrics"><div><span>SAMPLE EXECUTIONS / 30D</span><strong>2,481</strong></div><div><span>SAMPLE BLOCKED</span><strong>14</strong></div><div><span>SAMPLE AVG. DECISION</span><strong>184ms</strong></div><div><span>SAMPLE COVERAGE</span><strong>{policies[selectedPolicyIndex].coverage}%</strong></div></div></>}
+          {stateError && <p className="transfer-error" role="alert">{stateError}</p>}
         </section>
       </div>
       <PolicyReview onDecision={onDecision} />
+      {creating && <CreatePolicyDialog userId={userId} assets={data.assets} onClose={() => setCreating(false)} onCreated={policy => { onPolicyCreated(policy); setSelected(policies.length); setCreating(false); }} />}
     </main>
   );
 }
@@ -711,6 +761,11 @@ export default function App() {
     setFinancialData(current => ({ ...current, transactions: current.transactions.map(transaction =>
       transaction.id === id ? { ...transaction, status } : transaction) }));
   }, []);
+  const onPolicyCreated = useCallback((policy: ExamplePolicy) => {
+    setFinancialData(current => ({ ...current, policies: current.policies.some(item => item.name === policy.name)
+      ? current.policies.map(item => item.name === policy.name ? { ...policy } : item)
+      : [...current.policies, policy] }));
+  }, []);
 
   const refresh = useCallback(async (withReviews: boolean, force = false) => {
     if (!USER_ID) {
@@ -803,7 +858,7 @@ export default function App() {
     "Digital Twin": <DigitalTwin data={financialData} reviews={reviews} refreshError={twinRefreshError} />,
     "Portfolios": <Portfolios data={financialData} userId={USER_ID} onOpenTwin={() => setPage("Digital Twin")} />,
     "Transactions": <Transactions data={financialData} onNewTransfer={openTransfer} notice={transferNotice} />,
-    "Policy Engine": <PolicyEngine data={financialData} onDecision={onPolicyDecision} />,
+    "Policy Engine": <PolicyEngine data={financialData} userId={USER_ID} onDecision={onPolicyDecision} onPolicyCreated={onPolicyCreated} />,
     "Reporting": <Reporting data={financialData} />,
   };
   if (!USER_ID || !financialDataLoaded) return null;
