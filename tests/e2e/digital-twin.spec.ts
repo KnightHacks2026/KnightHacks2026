@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import { type Page } from "@playwright/test";
+import { expect, test } from "./authenticated-test";
 
 const tab = (page: Page, name: string) => page.locator(".section-tabs").getByRole("button", { name, exact: true });
 

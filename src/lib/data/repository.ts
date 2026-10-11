@@ -1,8 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
-import { CONTRACT_VERSION, exampleData, type AuditEvent, type Dataset, type DecimalInteger, type ExampleData, type FinancialSnapshot, type ImportDatasetRequest, type ImportDatasetResponse, type SourceRecord } from "@/contracts";
+import { CONTRACT_VERSION, exampleData, type AuditEvent, type Dataset, type DecimalInteger, type ExampleData, type ExamplePolicy, type FinancialSnapshot, type ImportDatasetRequest, type ImportDatasetResponse, type SourceRecord } from "@/contracts";
 import { cascadeImport } from "@/contracts/fixtures";
 import { evaluateTransfer, type ReviewTransfer, type PolicyEvaluation } from "@/lib/policy/evaluation";
 
@@ -16,6 +16,12 @@ const schema = `
     user_id TEXT NOT NULL PRIMARY KEY,
     password TEXT NOT NULL,
     otp_secret TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS custody_sessions (
+    session_hash TEXT NOT NULL PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    FOREIGN KEY(user_id) REFERENCES custody_authenticate(user_id)
   );
   CREATE TABLE IF NOT EXISTS custody_datasets (
     user_id TEXT NOT NULL, id TEXT NOT NULL, revision TEXT NOT NULL, contract_version TEXT NOT NULL,
@@ -247,6 +253,47 @@ export async function saveExampleData(data: ExampleData): Promise<void> {
   try {
     writeExampleData(database, demoUserId(), data);
     database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export const SESSION_COOKIE = "custodyos_session";
+export const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
+
+export async function createAuthenticationSession(userId: string): Promise<string> {
+  const token = randomBytes(32).toString("hex");
+  const hash = createHash("sha256").update(token).digest("hex");
+  const database = await getDatabase();
+  database.prepare("INSERT INTO custody_sessions (session_hash, user_id, expires_at) VALUES (?, ?, ?)")
+    .run(hash, userId, Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
+  return token;
+}
+
+export async function getAuthenticatedUser(request: Request): Promise<string | null> {
+  const cookie = request.headers.get("cookie")?.split(";").map(part => part.trim())
+    .find(part => part.startsWith(`${SESSION_COOKIE}=`));
+  const token = cookie?.slice(SESSION_COOKIE.length + 1);
+  if (!token || !/^[a-f0-9]{64}$/.test(token)) return null;
+  const hash = createHash("sha256").update(token).digest("hex");
+  const database = await getDatabase();
+  const row = database.prepare("SELECT user_id FROM custody_sessions WHERE session_hash = ? AND expires_at > ?")
+    .get(hash, Date.now()) as { user_id: string } | undefined;
+  return row?.user_id ?? null;
+}
+
+export async function createExamplePolicy(userId: string, input: Pick<ExamplePolicy, "name" | "scope" | "rule">): Promise<ExamplePolicy> {
+  const database = await getDatabase();
+  const policy: ExamplePolicy = { ...input, state: "Draft", coverage: 0 };
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const position = database.prepare("SELECT COALESCE(MAX(position), -1) + 1 AS next FROM example_policies WHERE user_id = ?")
+      .get(userId) as { next: number };
+    database.prepare("INSERT INTO example_policies (user_id, position, name, scope, rule, state, coverage) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(userId, position.next, policy.name, policy.scope, policy.rule, policy.state, policy.coverage);
+    database.exec("COMMIT");
+    return policy;
   } catch (error) {
     database.exec("ROLLBACK");
     throw error;

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./authenticated-test";
 
 const nav = (page: import("@playwright/test").Page, name: string) =>
   page.locator(".section-tabs").getByRole("button", { name, exact: true });

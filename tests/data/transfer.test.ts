@@ -1,24 +1,14 @@
-import { DatabaseSync } from "node:sqlite";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { POST as transfer } from "../../src/app/api/transfer/route";
 import { GET as financialData } from "../../src/app/api/users/[userId]/financial-data/route";
-import { getExampleData } from "../../src/lib/data/repository";
+import { createAuthenticationUser, getExampleData } from "../../src/lib/data/repository";
 
-const testRoutes = ["Bitcoin → Transfer test destination"];
 const testUserId = "demo-user";
-const cleanupTestTransfer = async () => {
-  await getExampleData(testUserId);
-  const database = new DatabaseSync(process.env.CUSTODYOS_DATABASE_PATH ?? "data/custodyos.sqlite");
-  try {
-    const removeTestTransaction = database.prepare("DELETE FROM example_transactions WHERE user_id = ? AND route = ?");
-    for (const route of testRoutes) removeTestTransaction.run(testUserId, route);
-  } finally {
-    database.close();
-  }
-};
 
-beforeAll(cleanupTestTransfer);
-afterAll(cleanupTestTransfer);
+beforeAll(async () => {
+  await getExampleData(testUserId);
+  await createAuthenticationUser(testUserId, "0".repeat(64), "JBSWY3DPEHPK3PXP");
+});
 
 const request = (body: unknown) => transfer(new Request("http://localhost/api/transfer", {
   method: "POST",

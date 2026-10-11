@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { Secret, TOTP } from "otpauth";
 import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api/envelope";
-import { getAuthenticationOtpSecret } from "@/lib/data/repository";
+import { createAuthenticationSession, getAuthenticationOtpSecret, SESSION_COOKIE, SESSION_MAX_AGE_SECONDS } from "@/lib/data/repository";
 
 export const runtime = "nodejs";
 
@@ -37,5 +37,9 @@ export async function POST(request: Request) {
     return apiError("PERMISSION_DENIED", "Invalid username, password, or OTP code.", 401);
   }
 
-  return apiSuccess({ userId: username });
+  const response = apiSuccess({ userId: username });
+  response.cookies.set(SESSION_COOKIE, await createAuthenticationSession(username), {
+    httpOnly: true, secure: new URL(request.url).protocol === "https:", sameSite: "strict", path: "/", maxAge: SESSION_MAX_AGE_SECONDS,
+  });
+  return response;
 }

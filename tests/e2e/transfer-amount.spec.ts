@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./authenticated-test";
 
 test("formatted amount submits exactly and persists after refresh", async ({ page }) => {
   const destination = `Amount formatting ${Date.now()}`;
@@ -24,7 +24,7 @@ test("formatted amount submits exactly and persists after refresh", async ({ pag
   const row = page.locator(".tx-row").filter({ hasText: destination });
   await expect(row.locator("span").nth(2)).toHaveText("BTC 2,000,000,000");
 
-  const db = new DatabaseSync("data/e2e.sqlite");
+  const db = new DatabaseSync(process.env.CUSTODYOS_DATABASE_PATH!);
   try {
     const stored = db.prepare("SELECT amount, status FROM example_transactions WHERE route = ?")
       .get(`BTC → ${destination}`) as { amount: string; status: string } | undefined;

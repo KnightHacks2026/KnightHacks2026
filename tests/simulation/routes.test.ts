@@ -36,9 +36,9 @@ describe("fixture-backed simulation API", () => {
     expect(responseWithAudit.data).toHaveProperty("auditEventId", "existing-audit-event");
     expect(full.data.result.comparison.newlySettledObligationIds).toHaveLength(3);
     expect(partial.data.result.comparison.stillBlockedObligationIds).toHaveLength(3);
-    expect(full.data.result.projected.cashBalances.reduce((sum: bigint, b: { settledMinorUnits: string }) => sum + BigInt(b.settledMinorUnits), 0n)).toBe(11000n);
+    expect(full.data.result.projected.cashBalances.reduce((sum: bigint, b: { settledMinorUnits: string }) => sum + BigInt(b.settledMinorUnits), 0n)).toBe(11000000000n);
     const after = await (await workspace(new Request("http://localhost/api/datasets/dataset-cascade/workspace"), context)).json();
-    expect(after.data.snapshot.cashBalances.find((b: { accountId: string }) => b.accountId === "acct-reserve").settledMinorUnits).toBe("2000");
+    expect(after.data.snapshot.cashBalances.find((b: { accountId: string }) => b.accountId === "acct-reserve").settledMinorUnits).toBe("2000000000");
     expect(after.data.recentAuditEvents).toEqual([]);
   });
 
@@ -58,7 +58,7 @@ describe("fixture-backed simulation API", () => {
   it("rejects stale revisions and returns invalid interventions without projected outcomes", async () => {
     const stale = await post({ ...fullFundingScenario, expectedDatasetRevision: "2" });
     expect(stale.status).toBe(409);
-    const invalid = await (await post({ ...fullFundingScenario, interventions: [{ ...fullFundingScenario.interventions[0], amount: { currency: "USD", minorUnits: "3000" } }] })).json();
+    const invalid = await (await post({ ...fullFundingScenario, interventions: [{ ...fullFundingScenario.interventions[0], amount: { currency: "USD", minorUnits: "3000000000" } }] })).json();
     expect(invalid.data.result.status).toBe("invalid");
     expect(invalid.data.result.projected).toBeUndefined();
     expect(invalid.data.result.comparison).toBeUndefined();
