@@ -547,3 +547,19 @@ h1 { margin-bottom: 4px; font: 400 29px/1.12 "Newsreader", serif; letter-spacing
 .risk-result-metrics { display:grid;grid-template-columns:1fr 1fr;gap:9px; }.risk-result-metrics > div { padding:12px;background:#f1edf3; }.risk-result-metrics span,.risk-result-metrics strong { display:block; }.risk-result-metrics span { color:#786882;font:8px "IBM Plex Mono"; }.risk-result-metrics strong { margin-top:7px;font:13px "IBM Plex Mono";text-transform:capitalize; }.risk-review-section > small { display:block;color:#75697c;font-size:9px;line-height:1.5; }.risk-review-disclosure { padding:13px 2px;color:#74687b;font-size:9px;line-height:1.5; }
 .action-row { color:inherit;font:inherit; }.action-review-cue { display:flex;align-items:center;justify-content:flex-end;gap:4px;color:#68467e;font:700 8px "IBM Plex Mono";letter-spacing:.06em;white-space:nowrap; }.obligation-review-row { width:100%;border-right:0;border-bottom:0;border-left:0;background:transparent;color:inherit;text-align:left;font:inherit;cursor:pointer; }.obligation-review-row:hover { background:#f1edf3; }.obligation-review-row:focus-visible,.action-row:focus-visible { outline:2px solid #7650a2;outline-offset:-2px; }.obligation-review-cue { color:#68467e!important;font-size:8px!important; }
 @media (max-width:700px) { .risk-review-panel { padding:18px; }.risk-review-summary { grid-template-columns:1fr; }.risk-review-context { flex-direction:column; }.risk-result-metrics { grid-template-columns:1fr; } }
+
+/* Keep long obligation IDs clear of the due date and review action. */
+.overview-grid .action-ledger .action-row {
+  grid-template-columns: 28px minmax(0, 1fr) auto max-content;
+  gap: 10px;
+  height: auto;
+  min-height: 68px;
+  padding-block: 10px;
+}
+.overview-grid .action-ledger .action-row > span:first-of-type { min-width: 0; }
+.overview-grid .action-ledger .action-row > span:first-of-type > strong {
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+.overview-grid .action-ledger .action-row > time { margin-right: 0; white-space: nowrap; }
+.overview-grid .action-ledger .action-review-cue { min-width: max-content; }
