@@ -38,10 +38,14 @@ describe("POST /api/users/login", () => {
   });
 
   afterAll(() => {
-    database.prepare("DELETE FROM custody_sessions WHERE user_id = ?").run(userId);
-    database.prepare("DELETE FROM custody_authenticate WHERE user_id = ?").run(userId);
-    database.prepare("DELETE FROM custody_authenticate WHERE user_id LIKE ?").run(`${registrationUserPrefix}%`);
-    database.close();
+    try {
+      database.prepare("DELETE FROM custody_sessions WHERE user_id = ? OR user_id LIKE ?")
+        .run(userId, `${registrationUserPrefix}%`);
+      database.prepare("DELETE FROM custody_authenticate WHERE user_id = ?").run(userId);
+      database.prepare("DELETE FROM custody_authenticate WHERE user_id LIKE ?").run(`${registrationUserPrefix}%`);
+    } finally {
+      database.close();
+    }
   });
 
   it("authenticates a matching user, SHA-256 hash, and hyphenated TOTP", async () => {
