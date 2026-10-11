@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { exampleData, type ExampleData, type ExamplePolicy, type ExampleTransaction } from "@/contracts";
+import type { ExampleData, ExamplePolicy, ExampleTransaction } from "@/contracts";
 import { TransferDialog } from "./transfer-dialog";
 import { PolicyReview } from "./policy-review";
 import { formatLedgerAmount } from "./ledger-amount";
@@ -12,9 +12,11 @@ import { activityNodes, topologyDemoActivities, type TopologyActivity } from "./
 import { downloadTopologySvg } from "./topology-export";
 import { TopologyPanel } from "./topology-panel";
 import { CreatePolicy } from "./create-policy";
-import { AllocationDonut, CategorizedInventory, inventoryViews, type InventoryView, type PortfolioDataset } from "./portfolio-inventory";
+import { CategorizedInventory, ConsolidatedInventory, inventoryViews, type InventoryView, type PortfolioDataset } from "./portfolio-inventory";
 
 type Page = "Overview" | "Digital Twin" | "Portfolios" | "Transactions" | "Policy Engine" | "Reporting";
+
+const emptyFinancialData: ExampleData = { assets: [], transactions: [], policies: [], nodes: [], edges: [] };
 
 type IconName =
   | "overview"
@@ -135,18 +137,21 @@ function Rail({ page, setPage }: { page: Page; setPage: (page: Page) => void }) 
   );
 }
 
-function Header({ page, setPage, openCommand }: { page: Page; setPage: (page: Page) => void; openCommand: () => void }) {
+function Header({ page, setPage, openCommand, datasets }: { page: Page; setPage: (page: Page) => void; openCommand: () => void; datasets: PortfolioDataset[] }) {
+  const latestDataset = [...datasets].sort((left, right) => Date.parse(right.snapshot.asOf) - Date.parse(left.snapshot.asOf))[0];
+  const openObligations = latestDataset?.snapshot.obligations.filter(item => item.status !== "settled" && item.status !== "cancelled").length ?? 0;
   return (
     <>
       <header className="topbar">
         <button type="button" className="wordmark" aria-label="CustodyOS home" onClick={() => setPage("Overview")}>CUSTODY<span>OS</span></button>
         <div className="desk-name">GLOBAL DIGITAL ASSET OPERATIONS</div>
-        <div className="market-strip">
-          <span>BTC</span><strong>$67,842.10</strong><em>+1.82%</em>
-          <span>ETH</span><strong>$3,486.22</strong><em>+0.94%</em>
+        <div className="market-strip" aria-label="Imported workspace summary">
+          <span>DATASETS</span><strong>{datasets.length}</strong>
+          <span>ACCOUNTS</span><strong>{latestDataset?.accounts.length ?? 0}</strong>
+          <span>OPEN</span><strong>{openObligations}</strong>
         </div>
-        <div className="system-health"><i /> SYSTEMS NOMINAL</div>
-        <button className="institution">ACME BANK <span>⌄</span></button>
+        <div className="system-health"><i /> WORKSPACE LOADED</div>
+        <div className="institution" title={latestDataset?.dataset.name ?? "No imported dataset"}>{latestDataset?.dataset.name ?? "LOCAL WORKSPACE"}</div>
       </header>
       <div className="sectionbar">
         <div className="section-tabs">
@@ -388,73 +393,83 @@ function EntityInspector({ selected, selectedActivity, onSelectActivity, assets,
   );
 }
 
-function Overview({ data, onNewTransfer }: { data: ExampleData; onNewTransfer: () => void }) {
-  const { assets, transactions } = data;
-  const netAssetValue = sumAssetValues(assets);
-  const attentionTransactions = transactions.filter(transaction => transaction.status !== "Completed");
-  const bars = [38, 48, 45, 58, 56, 63, 72, 68, 78, 74, 82, 88, 84, 93, 90, 98, 94, 104, 112, 108, 118, 124, 121, 132];
+function Overview({ data, datasets, onNewTransfer }: { data: ExampleData; datasets: PortfolioDataset[]; onNewTransfer: () => void }) {
   const [activeChartPoint, setActiveChartPoint] = useState<number | null>(null);
-  const chartPoints = bars.map((height, index) => {
-    const progress = index / (bars.length - 1);
-    const trendHeight = 38 + progress * (132 - 38);
-    const valueBillions = Math.min(8.42, Math.max(8.1, 8.1 + progress * 0.32 + (height - trendHeight) * 0.00025));
-    const date = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" })
-      .format(new Date(Date.UTC(2025, 8, 9 + Math.round(progress * 31))));
-    return { height, date, value: `~$${valueBillions.toFixed(2)}B` };
-  });
+  const latestDataset = [...datasets].sort((left, right) => Date.parse(right.snapshot.asOf) - Date.parse(left.snapshot.asOf))[0];
+  const snapshot = latestDataset?.snapshot;
+  const accounts = latestDataset?.accounts ?? [];
+  const obligations = snapshot?.obligations ?? [];
+  const statusGroups = ([
+    ["Pending", obligations.filter(item => item.status === "pending")],
+    ["At risk", obligations.filter(item => item.status === "at_risk")],
+    ["Blocked", obligations.filter(item => item.status === "blocked")],
+    ["Settled", obligations.filter(item => item.status === "settled")],
+  ] as const).map(([label, items]) => ({ label, count: items.length }));
+  const maxStatusCount = Math.max(1, ...statusGroups.map(group => group.count));
+  const cashByCurrency = new Map<string, bigint>();
+  for (const balance of snapshot?.cashBalances ?? []) {
+    cashByCurrency.set(balance.currency, (cashByCurrency.get(balance.currency) ?? 0n) + BigInt(balance.settledMinorUnits));
+  }
+  const usdMinorUnits = cashByCurrency.get("USD") ?? 0n;
+  const usdBalance = compactUsdFormatter.format(usdMinorUnits / 100n);
+  const openObligations = obligations.filter(item => item.status !== "settled" && item.status !== "cancelled");
+  const accountNames = new Map(accounts.map(account => [account.id, account.name]));
+  const snapshotDate = snapshot
+    ? new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(snapshot.asOf)) + " UTC"
+    : "No imported snapshot";
+  const transactionRows = data.transactions.slice(0, 4);
   return (
     <main className="page">
-      <PageHeading eyebrow="COMMAND CENTER / 10 OCT 2025" title="Operational Overview" description="Estate health, treasury posture, and high-priority actions across the global custody network." actions={<button className="button primary" onClick={onNewTransfer}>New transfer</button>} />
+      <PageHeading eyebrow={`COMMAND CENTER / ${snapshotDate}`} title="Operational Overview" description="Imported custody balances, settlement obligations, and workspace transfers from your latest snapshot." actions={<button className="button primary" onClick={onNewTransfer}>New transfer</button>} />
       <div className="overview-grid">
         <section className="exposure-panel">
-          <div className="panel-top"><p className="eyebrow">ASSETS UNDER CUSTODY</p><span className="positive">+2.4% MTD</span></div>
-          <div className="hero-number">{compactUsdFormatter.format(netAssetValue)}</div>
+          <div className="panel-top"><p className="eyebrow">SETTLED CASH · USD</p><span>{latestDataset?.dataset.name ?? "NO DATASET"}</span></div>
+          <div className="hero-number">{snapshot ? usdBalance : "—"}</div>
           <div className="chart">
-            {chartPoints.map((point, i) => (
+            {statusGroups.map((point, i) => (
               <i
-                key={i}
-                style={{ height: point.height }}
-                className={i > 19 ? "current" : ""}
+                key={point.label}
+                style={{ height: `${point.count === 0 ? 2 : Math.max(8, (point.count / maxStatusCount) * 112)}px` }}
+                className={point.label === "At risk" || point.label === "Blocked" ? "current" : ""}
                 tabIndex={0}
-                aria-label={`Estimated sample assets under custody: ${point.value} on ${point.date}`}
+                aria-label={`${point.label}: ${point.count} obligations`}
                 onPointerEnter={() => setActiveChartPoint(i)}
                 onPointerLeave={() => setActiveChartPoint((active) => active === i ? null : active)}
                 onFocus={() => setActiveChartPoint(i)}
                 onBlur={() => setActiveChartPoint((active) => active === i ? null : active)}
               >
-                {activeChartPoint === i && <span className="chart-tooltip" aria-hidden="true">{point.date}<strong>{point.value}</strong></span>}
+                {activeChartPoint === i && <span className="chart-tooltip" aria-hidden="true">{point.label}<strong>{point.count} obligations</strong></span>}
               </i>
             ))}
           </div>
-          <div className="chart-axis"><span>09 SEP</span><span>18 SEP</span><span>27 SEP</span><span>10 OCT</span></div>
+          <div className="chart-axis">{statusGroups.map(group => <span key={group.label}>{group.label.toUpperCase()}</span>)}</div>
         </section>
         <section className="action-ledger">
-          <div className="panel-top"><p className="eyebrow">REQUIRES ATTENTION</p><span>{String(attentionTransactions.length).padStart(2, "0")} OPEN</span></div>
-          {attentionTransactions.map((transaction, index) => (
-            <button className="action-row" key={transaction.id}>
+          <div className="panel-top"><p className="eyebrow">OPEN OBLIGATIONS</p><span>{String(openObligations.length).padStart(2, "0")} OPEN</span></div>
+          {openObligations.slice(0, 5).map((obligation, index) => (
+            <div className="action-row" key={obligation.id}>
               <b>{String(index + 1).padStart(2, "0")}</b>
-              <span><strong>{transaction.type} · {transaction.status}</strong><small>{transaction.asset} · {transaction.amount}</small></span>
-              <time>{transaction.time}</time><Icon name="arrow" size={14} />
-            </button>
+              <span><strong>{obligation.externalId} · {obligation.status.replaceAll("_", " ")}</strong><small>{accountNames.get(obligation.fromAccountId) ?? obligation.fromAccountId} → {accountNames.get(obligation.toAccountId) ?? obligation.toAccountId}</small></span>
+              <time>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(obligation.dueAt))}</time><Icon name="arrow" size={14} />
+            </div>
           ))}
+          {openObligations.length === 0 && <p role="status">{snapshot ? "No open obligations in this snapshot." : "Import a financial dataset to see settlement obligations here."}</p>}
         </section>
         <section className="asset-ribbon">
-          <p className="eyebrow">ASSET COMPOSITION</p>
-          <div className="allocation-bar">{assets.map(a => <i key={a.symbol} style={{ width: `${a.share}%` }} />)}</div>
-          <div className="asset-mini-grid">{assets.slice(0, 4).map(a => <div key={a.symbol}><span>{a.symbol}</span><strong>{a.value}</strong><small>{a.share}%</small></div>)}</div>
+          <p className="eyebrow">SNAPSHOT COVERAGE</p>
+          <div className="asset-mini-grid"><div><span>ACCOUNTS</span><strong>{snapshot ? accounts.length : "—"}</strong><small>in latest dataset</small></div><div><span>OBLIGATIONS</span><strong>{snapshot ? obligations.length : "—"}</strong><small>in latest snapshot</small></div><div><span>SECURITY BALANCES</span><strong>{snapshot ? snapshot.securitiesBalances.length : "—"}</strong><small>position entries</small></div><div><span>CASH ENTRIES</span><strong>{snapshot ? snapshot.cashBalances.length : "—"}</strong><small>in latest snapshot</small></div></div>
         </section>
         <section className="operations-stream">
-          <div className="panel-top"><p className="eyebrow">LIVE OPERATIONS</p><span className="live-dot">LIVE</span></div>
-          {transactions.slice(0, 4).map(tx => <div className="stream-row" key={tx.id}><time>{tx.time}</time><i /><span>{tx.type} · {tx.asset}</span><strong>{tx.value}</strong><small>{tx.status}</small></div>)}
+          <div className="panel-top"><p className="eyebrow">WORKSPACE TRANSFERS</p><span>{data.transactions.length} LOADED</span></div>
+          {transactionRows.map(tx => <div className="stream-row" key={tx.id}><time>{tx.time}</time><i /><span>{tx.type} · {tx.asset}</span><strong>{tx.value}</strong><small>{tx.status}</small></div>)}
+          {transactionRows.length === 0 && <p role="status">New transfer requests will appear here after they are submitted.</p>}
         </section>
       </div>
     </main>
   );
 }
 
-function Portfolios({ data, datasets, userId, onOpenTwin }: { data: ExampleData; datasets: PortfolioDataset[]; userId: string; onOpenTwin: () => void }) {
-  const { assets } = data;
-  const netAssetValue = sumAssetValues(assets);
+function Portfolios({ datasets, userId, onOpenTwin }: { datasets: PortfolioDataset[]; userId: string; onOpenTwin: () => void }) {
   const [active, setActive] = useState<InventoryView>("Consolidated");
   const [reconcileOpen, setReconcileOpen] = useState(false);
   const [reconcileLoading, setReconcileLoading] = useState(false);
@@ -486,31 +501,12 @@ function Portfolios({ data, datasets, userId, onOpenTwin }: { data: ExampleData;
   };
   return (
     <main className="page">
-      <PageHeading eyebrow={`PORTFOLIOS / ${active.toUpperCase()}`} title="Asset Inventory" description="Position-level visibility for loaded sample assets and classified imported accounts." actions={<button className="button secondary" onClick={runReconciliation}>Run reconciliation</button>} />
+      <PageHeading eyebrow={`PORTFOLIOS / ${active.toUpperCase()}`} title="Asset Inventory" description="Imported custody balances and settlement obligations from the latest available snapshot." actions={<button className="button secondary" onClick={runReconciliation}>Run reconciliation</button>} />
       <div className="portfolio-switcher" role="tablist" aria-label="Inventory views">{inventoryViews.map(x => <button type="button" role="tab" aria-selected={active === x} className={active === x ? "active" : ""} onClick={() => setActive(x)} key={x}>{x}</button>)}</div>
       <section className="portfolio-ledger">
-        {active === "Consolidated" ? <>
-        <div className="portfolio-overview">
-          <div className="portfolio-summary">
-            <div><span>NET ASSET VALUE</span><strong>{compactUsdFormatter.format(netAssetValue)}</strong></div>
-            <div><span>SAMPLE 24H MOVEMENT</span><strong className="positive">+$116.24M</strong></div>
-            <div><span>SAMPLE LIQUIDITY</span><strong>$1.84B</strong></div>
-            <div><span>SAMPLE NETWORKS</span><strong>14</strong></div>
-          </div>
-          <AllocationDonut assets={assets} />
-        </div>
-        <p className="portfolio-disclosure">Consolidated positions are the loaded sample asset summary. They are not mapped to imported custody accounts.</p>
-        <div className="ledger-head"><span>ASSET</span><span>BALANCE</span><span>MARKET VALUE</span><span>24H</span><span>ALLOCATION</span></div>
-        {assets.map((asset) => (
-          <button className="asset-row" key={asset.symbol}>
-            <span className="asset-name"><i>{asset.symbol.slice(0, 1)}</i><b>{asset.symbol}<small>{asset.name}</small></b></span>
-            <span>{asset.balance}</span><strong>{asset.value}</strong>
-            <span className={asset.change.startsWith("-") ? "negative" : "positive"}>{asset.change}</span>
-            <span className="allocation"><i><b style={{ width: `${asset.share * 2.1}%` }} /></i>{asset.share}%</span>
-          </button>
-        ))}
-        {assets.length === 0 && <div className="portfolio-empty" role="status"><h2>No consolidated assets</h2><p>This user has no loaded sample asset positions.</p></div>}
-        </> : <CategorizedInventory view={active} datasets={datasets} />}
+        {active === "Consolidated"
+          ? <ConsolidatedInventory datasets={datasets} />
+          : <CategorizedInventory view={active} datasets={datasets} />}
       </section>
       {reconcileOpen && <div className="reconcile-overlay" onMouseDown={() => setReconcileOpen(false)}>
         <aside className="reconcile-panel" role="dialog" aria-modal="true" aria-labelledby="reconcile-title" onMouseDown={event => event.stopPropagation()}>
@@ -541,12 +537,15 @@ function Portfolios({ data, datasets, userId, onOpenTwin }: { data: ExampleData;
   );
 }
 
-function Transactions({ data, onNewTransfer, notice }: { data: ExampleData; onNewTransfer: () => void; notice: string }) {
-  const { assets } = data;
-  const maxAssetShare = Math.max(0, ...assets.map((asset) => asset.share));
+function Transactions({ data, datasets, onNewTransfer, notice }: { data: ExampleData; datasets: PortfolioDataset[]; onNewTransfer: () => void; notice: string }) {
   const transactionValue = sumTransactionValues(data.transactions);
   const [filter, setFilter] = useState("All activity");
   const displayed = useMemo(() => filter === "All activity" ? data.transactions : data.transactions.filter(t => t.status === filter), [filter, data.transactions]);
+  const latestDataset = [...datasets].sort((left, right) => Date.parse(right.snapshot.asOf) - Date.parse(left.snapshot.asOf))[0];
+  const obligations = latestDataset?.snapshot.obligations ?? [];
+  const accounts = new Map((latestDataset?.accounts ?? []).map(account => [account.id, account.name]));
+  const attentionObligations = obligations.filter(item => item.status === "at_risk" || item.status === "blocked");
+  const openObligations = obligations.filter(item => item.status !== "settled" && item.status !== "cancelled");
   return (
     <main className="page transactions-page">
       <PageHeading eyebrow="TRANSACTIONS / LIVE LEDGER" title="Transaction Monitor" description="Authorization, compliance screening, and settlement state across every asset movement." actions={<button className="button primary" onClick={onNewTransfer}>New transfer</button>} />
@@ -564,17 +563,23 @@ function Transactions({ data, onNewTransfer, notice }: { data: ExampleData; onNe
       <section className="transaction-volume">
         <div className="volume-heading">
           <div><p className="eyebrow">LOADED TRANSACTION VALUE</p><strong>{compactUsdFormatter.format(transactionValue)}</strong><span>{data.transactions.length} loaded transactions</span></div>
-          <div><span>FINALITY RATE</span><strong>99.998%</strong><small>Median 3.2 sec</small></div>
+          <div><span>IMPORTED OBLIGATIONS</span><strong>{obligations.length}</strong><small>{attentionObligations.length} at risk or blocked</small></div>
         </div>
-        <div className="volume-chart" aria-label="Asset market value by asset">
-          {assets.map((asset) => (
-            <div className="volume-column" key={asset.symbol}>
-              <span>{asset.value}</span>
-              <div><i style={{ height: `${maxAssetShare ? (asset.share / maxAssetShare) * 86 : 0}%` }} /></div>
-              <strong>{asset.symbol}</strong>
-            </div>
-          ))}
-        </div>
+        <p className="portfolio-category__note">{latestDataset ? `${latestDataset.dataset.name} · Snapshot ${new Date(latestDataset.snapshot.asOf).toLocaleString()}` : "Import a dataset to load settlement obligations. Finality telemetry is not available in the current data source."}</p>
+        <div className="portfolio-category__head"><span>OBLIGATION</span><span>STATUS / ROUTE</span><span>DUE</span></div>
+        {openObligations.slice(0, 12).map(item => {
+          const currency = item.asset.kind === "cash" ? item.asset.currency : null;
+          const instrumentId = item.asset.kind === "security" ? item.asset.instrumentId : null;
+          const assetLabel = currency
+            ? `Cash · ${currency}`
+            : `Security · ${latestDataset?.instruments.find(instrument => instrument.id === instrumentId)?.symbol ?? instrumentId}`;
+          return <div className="portfolio-category__row" key={item.id}>
+            <div><strong>{item.externalId}</strong><small>{assetLabel}</small></div>
+            <div><span>{item.status.replaceAll("_", " ")}</span><small>{accounts.get(item.fromAccountId) ?? item.fromAccountId} → {accounts.get(item.toAccountId) ?? item.toAccountId}</small></div>
+            <span>{new Date(item.dueAt).toLocaleString()}</span>
+          </div>;
+        })}
+        {obligations.length === 0 && <p role="status">{latestDataset ? "No obligations are present in this imported snapshot." : "Imported settlement obligations will appear here when a dataset is loaded."}</p>}
       </section>
     </main>
   );
@@ -766,7 +771,7 @@ function PolicyEngine({ data, userId, onDecision, onPolicySaved }: {
               </div>
               {selectedPolicy.asset
                 ? <div className="policy-metrics"><div><span>RULE SCOPE</span><strong>New transfers</strong></div><div><span>ASSET</span><strong>{selectedPolicy.asset}</strong></div><div><span>THRESHOLD</span><strong>&gt; {selectedPolicy.threshold}</strong></div><div><span>EXECUTIONS</span><strong>From next review</strong></div></div>
-                : <div className="policy-metrics"><div><span>SAMPLE EXECUTIONS / 30D</span><strong>2,481</strong></div><div><span>SAMPLE BLOCKED</span><strong>14</strong></div><div><span>SAMPLE AVG. DECISION</span><strong>184ms</strong></div><div><span>SAMPLE COVERAGE</span><strong>{selectedPolicy.coverage}%</strong></div></div>}
+                : <div className="policy-metrics"><div><span>EXECUTIONS</span><strong>Not tracked</strong></div><div><span>BLOCKED TRANSFERS</span><strong>Not tracked</strong></div><div><span>DECISION LATENCY</span><strong>Not tracked</strong></div><div><span>CONTROL COVERAGE</span><strong>Not instrumented</strong></div></div>}
             </>}
             {policyActionError && <p className="transfer-error" role="alert">{policyActionError}</p>}
           </>}
@@ -799,10 +804,20 @@ function PolicyEngine({ data, userId, onDecision, onPolicySaved }: {
   );
 }
 
-function Reporting({ data }: { data: ExampleData }) {
-  const [visibleMonth, setVisibleMonth] = useState(() => new Date(Date.UTC(2026, 9, 1)));
+function Reporting({ data, datasets }: { data: ExampleData; datasets: PortfolioDataset[] }) {
+  const latestDataset = [...datasets].sort((left, right) => Date.parse(right.snapshot.asOf) - Date.parse(left.snapshot.asOf))[0];
+  const snapshot = latestDataset?.snapshot;
+  const obligations = snapshot?.obligations ?? [];
+  const [visibleMonth, setVisibleMonth] = useState(() => new Date());
+  const [monthWasChanged, setMonthWasChanged] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [generatedAt, setGeneratedAt] = useState("");
+  useEffect(() => {
+    if (snapshot && !monthWasChanged) {
+      const asOf = new Date(snapshot.asOf);
+      setVisibleMonth(new Date(Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), 1)));
+    }
+  }, [snapshot?.asOf, monthWasChanged]);
   const year = visibleMonth.getUTCFullYear();
   const month = visibleMonth.getUTCMonth();
   const firstDayOffset = (visibleMonth.getUTCDay() + 6) % 7;
@@ -810,24 +825,27 @@ function Reporting({ data }: { data: ExampleData }) {
   const previousMonthDays = new Date(Date.UTC(year, month, 0)).getUTCDate();
   const calendarCellCount = Math.ceil((firstDayOffset + daysInMonth) / 7) * 7;
   const monthLabel = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(visibleMonth);
-  const sampleEvents: Record<string, string> = {
-    "2026-10-03": "Reserve attestation",
-    "2026-10-10": "SOC evidence pack",
-    "2026-10-17": "NYDFS filing",
-    "2026-10-28": "Client statements",
-    "2026-11-01": "Proof of reserves",
+  const obligationsByDate = new Map<string, typeof obligations>();
+  for (const obligation of obligations) {
+    const dateKey = new Date(obligation.dueAt).toISOString().slice(0, 10);
+    obligationsByDate.set(dateKey, [...(obligationsByDate.get(dateKey) ?? []), obligation]);
+  }
+  const changeMonth = (increment: number) => {
+    setMonthWasChanged(true);
+    setVisibleMonth(current => new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + increment, 1)));
   };
-  const changeMonth = (increment: number) => setVisibleMonth(current =>
-    new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + increment, 1)));
-  const transactionValue = data.transactions.reduce((total, transaction) =>
-    transaction.value.trim() === "—" ? total : total + parseUsdValue(transaction.value, transaction.id), 0);
-  const completedTransactions = data.transactions.filter(transaction => transaction.status === "Completed").length;
-  const attentionTransactions = data.transactions.length - completedTransactions;
+  const periodObligations = obligations.filter(obligation => {
+    const dueAt = new Date(obligation.dueAt);
+    return dueAt.getUTCFullYear() === year && dueAt.getUTCMonth() === month;
+  });
+  const periodAttention = periodObligations.filter(obligation => obligation.status === "at_risk" || obligation.status === "blocked");
+  const monthQueue = [...periodObligations].sort((left, right) => Date.parse(left.dueAt) - Date.parse(right.dueAt)).slice(0, 4);
+  const cashUsdMinor = (snapshot?.cashBalances ?? []).filter(balance => balance.currency === "USD")
+    .reduce((total, balance) => total + BigInt(balance.settledMinorUnits), 0n);
+  const cashUsd = compactUsdFormatter.format(cashUsdMinor / 100n);
+  const monthYearLabel = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(visibleMonth);
+  const accountNames = new Map((latestDataset?.accounts ?? []).map(account => [account.id, account.name]));
   const activePolicies = data.policies.filter(policy => policy.state !== "Archived");
-  const enforcedPolicies = activePolicies.filter(policy => policy.state === "Enforced").length;
-  const averageCoverage = activePolicies.length
-    ? Math.round(activePolicies.reduce((total, policy) => total + policy.coverage, 0) / activePolicies.length)
-    : 0;
   const openReport = () => {
     setGeneratedAt(new Date().toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }));
     setReportOpen(true);
@@ -835,10 +853,10 @@ function Reporting({ data }: { data: ExampleData }) {
 
   return (
     <main className="page reporting-page">
-      <PageHeading eyebrow="REPORTING / SAMPLE SCHEDULE" title="Evidence & Reporting" description="Sample reporting dates and evidence queue. Calendar navigation changes the schedule view; snapshot exports use all currently loaded workspace data." actions={<button className="button primary" onClick={openReport}>Generate snapshot report</button>} />
+      <PageHeading eyebrow="REPORTING / IMPORTED DATA" title="Evidence & Reporting" description="Imported settlement obligations by due date and a read-only report for the selected month." actions={<button className="button primary" onClick={openReport}>Generate snapshot report</button>} />
       <div className="report-layout">
         <section className="report-calendar">
-          <div className="report-month"><button type="button" aria-label="Previous month" onClick={() => changeMonth(-1)}>←</button><h2>{monthLabel} · Sample</h2><button type="button" aria-label="Next month" onClick={() => changeMonth(1)}>→</button></div>
+          <div className="report-month"><button type="button" aria-label="Previous month" onClick={() => changeMonth(-1)}>←</button><h2>{monthLabel}</h2><button type="button" aria-label="Next month" onClick={() => changeMonth(1)}>→</button></div>
           <div className="weekdays">{["MON","TUE","WED","THU","FRI","SAT","SUN"].map(d => <span key={d}>{d}</span>)}</div>
           <div className="days">{Array.from({ length: calendarCellCount }, (_, i) => {
             const day = i - firstDayOffset + 1;
@@ -846,39 +864,44 @@ function Reporting({ data }: { data: ExampleData }) {
             const displayDay = day < 1 ? previousMonthDays + day : day > daysInMonth ? day - daysInMonth : day;
             const cellDate = new Date(Date.UTC(year, month, day));
             const dateKey = cellDate.toISOString().slice(0, 10);
-            const event = sampleEvents[dateKey];
-            return <div className={`${dateKey === "2026-10-10" ? "today" : ""} ${outsideMonth ? "muted" : ""}`} key={dateKey}><span>{displayDay}</span>{event && <b>{event}</b>}</div>;
+            const dayObligations = obligationsByDate.get(dateKey) ?? [];
+            return <div className={`${dateKey === new Date().toISOString().slice(0, 10) ? "today" : ""} ${outsideMonth ? "muted" : ""}`} key={dateKey}><span>{displayDay}</span>{dayObligations.length > 0 && <b>{dayObligations.length === 1 ? dayObligations[0].externalId : `${dayObligations.length} obligations`}</b>}</div>;
           })}</div>
         </section>
         <aside className="report-queue">
-          <p className="eyebrow">SAMPLE OBLIGATION QUEUE</p>
-          {[["SOC 2 evidence pack","10 Oct 2026 · 18:00 UTC","94%"],["NYDFS custody filing","17 Oct 2026","71%"],["Q3 client statements","28 Oct 2026","42%"],["Proof of reserves","01 Nov 2026","18%"]].map((r, i) => <div className="report-item" key={r[0]}><span>0{i + 1}</span><div><strong>{r[0]}</strong><small>{r[1]}</small><i><b style={{ width: r[2] }} /></i></div><em>{r[2]}</em></div>)}
-          <div className="assurance-seal"><Icon name="check" size={22} /><span><strong>Demo evidence queue</strong><small>No connected evidence source</small></span></div>
+          <p className="eyebrow">OBLIGATIONS DUE · {monthLabel.toUpperCase()}</p>
+          {monthQueue.map((obligation, i) => {
+            const requiredUnits = BigInt(obligation.requiredUnits);
+            const settledPercent = requiredUnits > 0n ? Math.min(100, Number(BigInt(obligation.settledUnits) * 100n / requiredUnits)) : 0;
+            return <div className="report-item" key={obligation.id}><span>0{i + 1}</span><div><strong>{obligation.externalId}</strong><small>{new Date(obligation.dueAt).toLocaleString()} · {obligation.status.replaceAll("_", " ")}</small><i><b style={{ width: `${settledPercent}%` }} /></i></div><em>{obligation.status.replaceAll("_", " ")}</em></div>;
+          })}
+          {monthQueue.length === 0 && <p role="status">{snapshot ? "No obligations are due in this month in the imported snapshot." : "Import a dataset to see obligations by due date."}</p>}
+          <div className="assurance-seal"><Icon name="check" size={22} /><span><strong>{latestDataset?.dataset.name ?? "No dataset loaded"}</strong><small>{snapshot ? `Snapshot as of ${new Date(snapshot.asOf).toLocaleString()}` : "No imported snapshot available"}</small></span></div>
         </aside>
       </div>
       {reportOpen && <div className="report-overlay" onMouseDown={() => setReportOpen(false)}>
         <section className="report-preview" role="dialog" aria-modal="true" aria-labelledby="report-preview-title" onMouseDown={event => event.stopPropagation()}>
           <header className="report-preview-head">
-            <div><p className="eyebrow">CUSTODYOS / OPERATIONS EVIDENCE</p><h2 id="report-preview-title">Workspace snapshot report</h2><span>October 2026 reference period · ACME Bank</span></div>
+            <div><p className="eyebrow">CUSTODYOS / OPERATIONS EVIDENCE</p><h2 id="report-preview-title">Workspace snapshot report</h2><span>{monthYearLabel} · {latestDataset?.dataset.name ?? "No imported dataset"}</span></div>
             <button type="button" aria-label="Close report preview" onClick={() => setReportOpen(false)}>×</button>
           </header>
           <div className="report-document">
-            <div className="report-period"><span>SNAPSHOT REFERENCE PERIOD</span><strong>October 2026</strong></div>
-            <div className="report-document-meta"><span>GENERATED {generatedAt}</span><span>WORKSPACE demo-user</span><span>REFERENCE MONTH OCTOBER 2026</span><span>STATUS SAMPLE DATA</span></div>
+            <div className="report-period"><span>SELECTED REPORT MONTH</span><strong>{monthYearLabel}</strong></div>
+            <div className="report-document-meta"><span>GENERATED {generatedAt}</span><span>DATASET {latestDataset?.dataset.id ?? "NONE"}</span><span>SNAPSHOT {snapshot ? new Date(snapshot.asOf).toLocaleString() : "NOT AVAILABLE"}</span><span>PERIOD OBLIGATIONS {periodObligations.length}</span></div>
             <section className="report-executive">
               <p className="eyebrow">EXECUTIVE SUMMARY</p>
               <div className="report-kpis">
-                <div><span>ASSETS UNDER CUSTODY</span><strong>{compactUsdFormatter.format(sumAssetValues(data.assets))}</strong><small>{data.assets.length} asset classes</small></div>
-                <div><span>LOADED ACTIVITY</span><strong>{compactUsdFormatter.format(transactionValue)}</strong><small>{data.transactions.length} transactions</small></div>
-                <div><span>REQUIRES ATTENTION</span><strong>{attentionTransactions}</strong><small>{completedTransactions} completed</small></div>
-                <div><span>POLICY COVERAGE</span><strong>{averageCoverage}%</strong><small>{enforcedPolicies} enforced · {activePolicies.length} active</small></div>
+                <div><span>USD SETTLED CASH</span><strong>{snapshot ? cashUsd : "—"}</strong><small>{snapshot?.cashBalances.filter(balance => balance.currency === "USD").length ?? 0} USD cash entries</small></div>
+                <div><span>OBLIGATIONS DUE</span><strong>{periodObligations.length}</strong><small>{monthYearLabel}</small></div>
+                <div><span>AT RISK / BLOCKED</span><strong>{periodAttention.length}</strong><small>in selected month</small></div>
+                <div><span>ACCOUNTS</span><strong>{latestDataset?.accounts.length ?? "—"}</strong><small>in selected dataset</small></div>
               </div>
             </section>
             <div className="report-columns">
-              <section><p className="eyebrow">TRANSACTION EVIDENCE</p>{data.transactions.slice(0, 5).map(transaction => <div className="report-evidence-row" key={transaction.id}><span><strong>{transaction.type} · {transaction.asset}</strong><small>{transaction.id} · {transaction.route}</small></span><em>{transaction.status}</em></div>)}</section>
-              <section><p className="eyebrow">POLICY CONTROLS</p>{data.policies.map(policy => <div className="report-evidence-row" key={policy.name}><span><strong>{policy.name}</strong><small>{policy.scope} · {policy.rule}</small></span><em>{policy.state} · {policy.coverage}%</em></div>)}</section>
+              <section><p className="eyebrow">OBLIGATION EVIDENCE · {monthYearLabel.toUpperCase()}</p>{periodObligations.slice(0, 5).map(obligation => <div className="report-evidence-row" key={obligation.id}><span><strong>{obligation.externalId} · {obligation.status.replaceAll("_", " ")}</strong><small>{accountNames.get(obligation.fromAccountId) ?? obligation.fromAccountId} → {accountNames.get(obligation.toAccountId) ?? obligation.toAccountId}</small></span><em>{new Date(obligation.dueAt).toLocaleString()}</em></div>)}{periodObligations.length === 0 && <p>No imported obligations are due in the selected month.</p>}</section>
+              <section><p className="eyebrow">POLICY CONTROLS</p>{data.policies.map(policy => <div className="report-evidence-row" key={policy.name}><span><strong>{policy.name}</strong><small>{policy.scope} · {policy.rule}</small></span><em>{policy.state}</em></div>)}{data.policies.length === 0 && <p>No policies are configured for this account.</p>}</section>
             </div>
-            <div className="report-disclosure"><Icon name="check" size={18} /><span><strong>Evidence package generated from the loaded workspace</strong><small>This report always represents the October 2026 sample snapshot. Calendar navigation only changes the obligation schedule view; production exports should derive their period from immutable dataset and snapshot timestamps.</small></span></div>
+            <div className="report-disclosure"><Icon name="check" size={18} /><span><strong>Read-only snapshot report</strong><small>Balances reflect the imported snapshot timestamp above. Obligation counts and evidence rows include only obligations due in the selected month. No historical balance series is implied.</small></span></div>
           </div>
           <footer className="report-preview-actions"><span>Read-only export · no operational records changed</span><div><button type="button" className="button secondary" onClick={() => setReportOpen(false)}>Close</button><button type="button" className="button primary" onClick={() => window.print()}>Print / Save PDF</button></div></footer>
         </section>
@@ -918,7 +941,7 @@ export default function App() {
   const [USER_ID, setUSER_ID] = useState("");
   const [page, setPage] = useState<Page>("Overview");
   const [commandOpen, setCommandOpen] = useState(false);
-  const [financialData, setFinancialData] = useState<ExampleData>(exampleData);
+  const [financialData, setFinancialData] = useState<ExampleData>(emptyFinancialData);
   const [portfolioDatasets, setPortfolioDatasets] = useState<PortfolioDataset[]>([]);
   const [financialDataLoaded, setFinancialDataLoaded] = useState(false);
   const [financialDataError, setFinancialDataError] = useState("");
@@ -1018,17 +1041,27 @@ export default function App() {
 
   useEffect(() => {
     if (!USER_ID) return;
-    void refresh(false, true);
+    void refresh(page === "Digital Twin", true);
     return () => refreshController.current?.abort();
-  }, [USER_ID, refresh]);
+  }, [USER_ID, page, refresh]);
 
   useEffect(() => {
     if (!USER_ID || page !== "Digital Twin") return;
-    void refresh(true, true);
-    const onFocus = () => { void refresh(true); };
-    window.addEventListener("focus", onFocus);
     const timer = window.setInterval(() => { if (!document.hidden) void refresh(true); }, 15_000);
-    return () => { window.removeEventListener("focus", onFocus); window.clearInterval(timer); refreshController.current?.abort(); };
+    return () => { window.clearInterval(timer); refreshController.current?.abort(); };
+  }, [USER_ID, page, refresh]);
+
+  useEffect(() => {
+    if (!USER_ID) return;
+    const refreshVisibleWorkspace = () => {
+      if (document.visibilityState === "visible") void refresh(page === "Digital Twin", true);
+    };
+    window.addEventListener("focus", refreshVisibleWorkspace);
+    document.addEventListener("visibilitychange", refreshVisibleWorkspace);
+    return () => {
+      window.removeEventListener("focus", refreshVisibleWorkspace);
+      document.removeEventListener("visibilitychange", refreshVisibleWorkspace);
+    };
   }, [USER_ID, page, refresh]);
 
   useEffect(() => {
@@ -1049,25 +1082,25 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [commandOpen]);
   const pages: Record<Page, React.ReactNode> = {
-    "Overview": <Overview data={financialData} onNewTransfer={openTransfer} />,
+    "Overview": <Overview data={financialData} datasets={portfolioDatasets} onNewTransfer={openTransfer} />,
     "Digital Twin": <DigitalTwin data={financialData} reviews={reviews} refreshError={twinRefreshError} />,
-    "Portfolios": <Portfolios data={financialData} datasets={portfolioDatasets} userId={USER_ID} onOpenTwin={() => setPage("Digital Twin")} />,
-    "Transactions": <Transactions data={financialData} onNewTransfer={openTransfer} notice={transferNotice} />,
+    "Portfolios": <Portfolios datasets={portfolioDatasets} userId={USER_ID} onOpenTwin={() => setPage("Digital Twin")} />,
+    "Transactions": <Transactions data={financialData} datasets={portfolioDatasets} onNewTransfer={openTransfer} notice={transferNotice} />,
     "Policy Engine": <PolicyEngine data={financialData} userId={USER_ID} onDecision={onPolicyDecision} onPolicySaved={onPolicySaved} />,
-    "Reporting": <Reporting data={financialData} />,
+    "Reporting": <Reporting data={financialData} datasets={portfolioDatasets} />,
   };
   if (!USER_ID || !financialDataLoaded) return null;
 
   return (
-    <div className="app-shell make-prototype" data-data-source="figma-demo-sample">
+    <div className="app-shell make-prototype" data-data-source="account-api">
       <Rail page={page} setPage={setPage} />
-      <Header page={page} setPage={setPage} openCommand={() => setCommandOpen(true)} />
+      <Header page={page} setPage={setPage} openCommand={() => setCommandOpen(true)} datasets={portfolioDatasets} />
       {financialDataError && <p className="transfer-load-error" role="alert">{financialDataError}</p>}
       {pages[page]}
-      <footer className="statusbar"><span>NETWORK <b>MAINNET</b></span><span>LAST FINALITY <b>3.2 SEC</b></span><span>POLICY ENGINE <b className="positive">OPERATIONAL</b></span><time>UTC 16:42:09</time></footer>
+      <footer className="statusbar"><span>DATASETS <b>{portfolioDatasets.length}</b></span><span>SNAPSHOT <b>{portfolioDatasets.length ? new Date([...portfolioDatasets].sort((left, right) => Date.parse(right.snapshot.asOf) - Date.parse(left.snapshot.asOf))[0].snapshot.asOf).toLocaleString() : "NOT LOADED"}</b></span><span>POLICY RULES <b>{financialData.policies.length}</b></span></footer>
       {commandOpen && <CommandPalette close={() => setCommandOpen(false)} setPage={setPage} />}
       {transferOpen && (financialDataLoaded
-        ? <TransferDialog assets={financialData.assets} onClose={closeTransfer} onCreated={onTransferCreated} />
+        ? <TransferDialog userId={USER_ID} assets={financialData.assets} onClose={closeTransfer} onCreated={onTransferCreated} />
         : <div className="transfer-overlay" onMouseDown={closeTransfer}><section className="transfer-dialog" role="dialog" aria-modal="true" aria-label="New transfer" onMouseDown={event => event.stopPropagation()}><p role="status">{financialDataError || "Loading demo inventory…"}</p><button type="button" className="button secondary" onClick={closeTransfer}>Close</button></section></div>)}
     </div>
   );

@@ -1,11 +1,15 @@
 import { cascadeImport, cascadeSnapshot } from "@/contracts/fixtures";
 import type { Dataset, FinancialSnapshot } from "@/contracts";
 import type { SimulationInput } from "./index";
-import { getImportedDataset } from "@/lib/data/repository";
+import { getDemoUserId, getImportedDataset } from "@/lib/data/repository";
 
-/** The only available dataset until the import/persistence service is connected. */
-export async function getSimulationDataset(datasetId: string) {
-  if (datasetId !== cascadeImport.dataset.id) return getImportedDataset(datasetId);
+/** Resolve a dataset only within the authenticated account's namespace. */
+// Keep the demo default for existing internal fixture consumers. API routes must pass
+// the authenticated account explicitly; all route handlers do so.
+export async function getSimulationDataset(datasetId: string, userId = getDemoUserId()) {
+  if (datasetId !== cascadeImport.dataset.id) return getImportedDataset(datasetId, userId);
+  // The built-in cascade is a demo account fixture, not a shared workspace.
+  if (userId !== getDemoUserId()) return null;
   const dataset: Dataset = {
     ...cascadeImport.dataset,
     revision: cascadeSnapshot.datasetRevision,
