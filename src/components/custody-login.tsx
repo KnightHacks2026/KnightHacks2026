@@ -1,5 +1,6 @@
 "use client";
 
+import { sha256 } from "js-sha256";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { cascadeImport } from "../contracts/fixtures/twin-cascade";
@@ -35,6 +36,8 @@ export default function CustodyLogin() {
   const [emailPreview, setEmailPreview] = useState("");
   const [passwordPreview, setPasswordPreview] = useState("");
   const [previewPaused, setPreviewPaused] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loginError, setLoginError] = useState("");
 
   useEffect(() => {
     const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -89,25 +92,65 @@ export default function CustodyLogin() {
             className={styles.loginForm}
             autoComplete="off"
             onFocusCapture={() => setPreviewPaused(true)}
-            onSubmit={(event) => {
+            onSubmit={async (event) => {
               event.preventDefault();
-              router.push("/");
+              if (isSubmitting) return;
+
+              const formData = new FormData(event.currentTarget);
+              const username = String(formData.get("username") ?? "").trim();
+              const password = String(formData.get("password") ?? "");
+              const otpCode = String(formData.get("otp") ?? "");
+
+              setIsSubmitting(true);
+              setLoginError("");
+              try {
+                const response = await fetch("/api/users/login", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ username, password: sha256(password), otpCode }),
+                });
+                const result: unknown = await response.json();
+                if (!response.ok) {
+                  setLoginError("Invalid username, password, or one-time password.");
+                  return;
+                }
+                if (
+                  typeof result !== "object" ||
+                  result === null ||
+                  !("ok" in result) ||
+                  result.ok !== true ||
+                  !("data" in result) ||
+                  typeof result.data !== "object" ||
+                  result.data === null ||
+                  !("userId" in result.data) ||
+                  typeof result.data.userId !== "string"
+                ) {
+                  throw new Error("Login endpoint returned an invalid response.");
+                }
+                window.sessionStorage.setItem("userid", result.data.userId);
+                router.push("/");
+              } catch {
+                setLoginError("Unable to sign in right now. Please try again.");
+              } finally {
+                setIsSubmitting(false);
+              }
             }}
           >
             <label className={styles.field}>
               <span>WORK EMAIL</span>
-              <input type="email" name="email" autoComplete="off" placeholder={previewPaused ? "name@institution.com" : emailPreview} required />
+              <input type="text" name="username" autoComplete="username" placeholder={previewPaused ? "name@institution.com" : emailPreview} required />
             </label>
             <label className={styles.field}>
               <span>PASSWORD</span>
-              <input type="password" name="password" autoComplete="off" placeholder={previewPaused ? "Enter a sample password" : passwordPreview} required />
+              <input type="password" name="password" autoComplete="current-password" placeholder={previewPaused ? "Enter a sample password" : passwordPreview} required />
             </label>
             <label className={styles.field}>
               <span>ONE TIME PASSWORD</span>
               <input type="text" name="otp" inputMode="numeric" autoComplete="one-time-code" placeholder="123456" required />
             </label>
-            <button className={styles.enterButton} type="submit">
-              Log in <span aria-hidden="true">→</span>
+            {loginError && <p className={styles.loginError} role="alert">{loginError}</p>}
+            <button className={styles.enterButton} type="submit" disabled={isSubmitting}>
+              {isSubmitting ? "Signing in…" : "Log in"} <span aria-hidden="true">→</span>
             </button>
           </form>
 

@@ -162,6 +162,13 @@
   outline-offset: 2px;
 }
 
+.loginError {
+  margin: -8px 0 0;
+  color: #b42318;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .enterButton {
   display: flex;
   min-height: 48px;
@@ -186,6 +193,12 @@
 .enterButton:hover {
   transform: translateY(-1px);
   background: #6047c1;
+}
+
+.enterButton:disabled {
+  cursor: wait;
+  opacity: 0.75;
+  transform: none;
 }
 
 .enterButton:focus-visible {

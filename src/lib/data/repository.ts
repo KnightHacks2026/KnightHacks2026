@@ -165,6 +165,11 @@ export async function getAuthenticationOtpSecret(userId: string, passwordHash: s
   return record?.otp_secret ?? null;
 }
 
+export async function hasAuthenticationUser(userId: string): Promise<boolean> {
+  const database = await getDatabase();
+  return database.prepare("SELECT 1 AS present FROM custody_authenticate WHERE user_id = ?").get(userId) !== undefined;
+}
+
 export interface DatasetSource {
   dataset: Dataset;
   snapshot: FinancialSnapshot;
