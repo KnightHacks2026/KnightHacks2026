@@ -3,6 +3,7 @@
 import { sha256 } from "js-sha256";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import QRCode from "qrcode";
 import { cascadeImport } from "../contracts/fixtures/twin-cascade";
 import styles from "./custody-login.module.css";
 
@@ -30,6 +31,19 @@ const dollars = (minorUnits: bigint) => {
 const previewEmail = "analyst@institution.com";
 const previewPassword = "********";
 
+type RegistrationStep = "login" | "details" | "mfa";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function apiErrorMessage(result: unknown, fallback: string): string {
+  if (isRecord(result) && isRecord(result.error) && typeof result.error.message === "string") {
+    return result.error.message;
+  }
+  return fallback;
+}
+
 export default function CustodyLogin() {
   const router = useRouter();
   const [activeLeg, setActiveLeg] = useState(0);
@@ -38,6 +52,17 @@ export default function CustodyLogin() {
   const [previewPaused, setPreviewPaused] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loginError, setLoginError] = useState("");
+  const [registrationStep, setRegistrationStep] = useState<RegistrationStep>("login");
+  const [manualCodeVisible, setManualCodeVisible] = useState(false);
+  const [registrationId, setRegistrationId] = useState("");
+  const [registrationUsername, setRegistrationUsername] = useState("");
+  const [registrationSecret, setRegistrationSecret] = useState("");
+  const [registrationExpiresAt, setRegistrationExpiresAt] = useState("");
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState("");
+  const [registrationError, setRegistrationError] = useState("");
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [isGeneratingQr, setIsGeneratingQr] = useState(false);
+  const [isVerifyingRegistration, setIsVerifyingRegistration] = useState(false);
 
   useEffect(() => {
     const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -74,6 +99,20 @@ export default function CustodyLogin() {
     return () => window.clearInterval(timer);
   }, [previewPaused]);
 
+  async function generateRegistrationQrCode(username: string, secret: string) {
+    const otpAuthUri = `otpauth://totp/CustodyOS:${encodeURIComponent(username)}?secret=${encodeURIComponent(secret)}&issuer=CustodyOS`;
+    setIsGeneratingQr(true);
+    setRegistrationError("");
+    try {
+      setQrCodeDataUrl(await QRCode.toDataURL(otpAuthUri, { width: 251, margin: 1 }));
+    } catch {
+      setQrCodeDataUrl("");
+      setRegistrationError("Unable to generate the authenticator QR code. You can still use the manual setup key.");
+    } finally {
+      setIsGeneratingQr(false);
+    }
+  }
+
   return (
     <main className={styles.screen}>
       <section className={styles.access} aria-labelledby="access-title">
@@ -83,82 +122,259 @@ export default function CustodyLogin() {
           <span className={styles.brandOs}>OS</span>
         </header>
 
-        <div className={styles.accessBody}>
-          <p className={styles.kicker}>CUSTODY OPERATIONS</p>
-          <h1 id="access-title">Sign in to<br />CustodyOS.</h1>
-          <p className={styles.intro}>Review settlement risk and funding options in one workspace.</p>
+        {registrationStep === "login" && (
+          <div className={styles.accessBody}>
+            <p className={styles.kicker}>CUSTODY OPERATIONS</p>
+            <h1 id="access-title">Sign in to<br />CustodyOS.</h1>
+            <p className={styles.intro}>Review settlement risk and funding options in one workspace.</p>
 
-          <form
-            className={styles.loginForm}
-            autoComplete="off"
-            onFocusCapture={() => setPreviewPaused(true)}
-            onSubmit={async (event) => {
-              event.preventDefault();
-              if (isSubmitting) return;
+            <form
+              className={styles.loginForm}
+              autoComplete="off"
+              onFocusCapture={() => setPreviewPaused(true)}
+              onSubmit={async (event) => {
+                event.preventDefault();
+                if (isSubmitting) return;
 
-              const formData = new FormData(event.currentTarget);
-              const username = String(formData.get("username") ?? "").trim();
-              const password = String(formData.get("password") ?? "");
-              const otpCode = String(formData.get("otp") ?? "");
+                const formData = new FormData(event.currentTarget);
+                const username = String(formData.get("username") ?? "").trim();
+                const password = String(formData.get("password") ?? "");
+                const otpCode = String(formData.get("otp") ?? "");
 
-              setIsSubmitting(true);
-              setLoginError("");
-              try {
-                const response = await fetch("/api/users/login", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ username, password: sha256(password), otpCode }),
-                });
-                const result: unknown = await response.json();
-                if (!response.ok) {
-                  setLoginError(response.status === 401
-                    ? "Sign-in failed. Check your username and password, then use the current code from your authenticator. If you have no local account, run npm.cmd run auth:setup -- demo-user in this worktree."
-                    : response.status === 400
-                      ? "Enter your username, password, and a six-digit authenticator code."
-                      : "Sign-in service is unavailable. Please try again.");
-                  return;
+                setIsSubmitting(true);
+                setLoginError("");
+                try {
+                  const response = await fetch("/api/users/login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ username, password: sha256(password), otpCode }),
+                  });
+                  const result: unknown = await response.json();
+                  if (!response.ok) {
+                    setLoginError("Invalid username, password, or one-time password.");
+                    return;
+                  }
+                  if (
+                    typeof result !== "object" ||
+                    result === null ||
+                    !("ok" in result) ||
+                    result.ok !== true ||
+                    !("data" in result) ||
+                    typeof result.data !== "object" ||
+                    result.data === null ||
+                    !("userId" in result.data) ||
+                    typeof result.data.userId !== "string"
+                  ) {
+                    throw new Error("Login endpoint returned an invalid response.");
+                  }
+                  window.sessionStorage.setItem("userid", result.data.userId);
+                  router.push("/");
+                } catch {
+                  setLoginError("Unable to sign in right now. Please try again.");
+                } finally {
+                  setIsSubmitting(false);
                 }
-                if (
-                  typeof result !== "object" ||
-                  result === null ||
-                  !("ok" in result) ||
-                  result.ok !== true ||
-                  !("data" in result) ||
-                  typeof result.data !== "object" ||
-                  result.data === null ||
-                  !("userId" in result.data) ||
-                  typeof result.data.userId !== "string"
-                ) {
-                  throw new Error("Login endpoint returned an invalid response.");
-                }
-                window.sessionStorage.setItem("userid", result.data.userId);
-                router.push("/");
-              } catch {
-                setLoginError("Unable to sign in right now. Please try again.");
-              } finally {
-                setIsSubmitting(false);
-              }
-            }}
-          >
-            <label className={styles.field}>
-              <span>WORK EMAIL</span>
-              <input type="text" name="username" autoComplete="username" placeholder={previewPaused ? "name@institution.com" : emailPreview} required />
-            </label>
-            <label className={styles.field}>
-              <span>PASSWORD</span>
-              <input type="password" name="password" autoComplete="current-password" placeholder={previewPaused ? "Enter a sample password" : passwordPreview} required />
-            </label>
-            <label className={styles.field}>
-              <span>ONE TIME PASSWORD</span>
-              <input type="text" name="otp" inputMode="numeric" autoComplete="one-time-code" placeholder="123456" required />
-            </label>
-            {loginError && <p className={styles.loginError} role="alert">{loginError}</p>}
-            <button className={styles.enterButton} type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Signing in…" : "Log in"} <span aria-hidden="true">→</span>
+              }}
+            >
+              <label className={styles.field}>
+                <span>WORK EMAIL</span>
+                <input type="text" name="username" autoComplete="username" placeholder={previewPaused ? "name@institution.com" : emailPreview} required />
+              </label>
+              <label className={styles.field}>
+                <span>PASSWORD</span>
+                <input type="password" name="password" autoComplete="current-password" placeholder={previewPaused ? "Enter a sample password" : passwordPreview} required />
+              </label>
+              <label className={styles.field}>
+                <span>ONE TIME PASSWORD</span>
+                <input type="text" name="otp" inputMode="numeric" autoComplete="one-time-code" placeholder="123456" required />
+              </label>
+              {loginError && <p className={styles.loginError} role="alert">{loginError}</p>}
+              <button className={styles.enterButton} type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Signing in…" : "Log in"} <span aria-hidden="true">→</span>
+              </button>
+            </form>
+
+            <button className={styles.signupButton} type="button" onClick={() => setRegistrationStep("details")}>
+              Sign up
             </button>
-          </form>
+          </div>
+        )}
 
-        </div>
+        {registrationStep === "details" && (
+          <div className={styles.accessBody}>
+            <p className={styles.kicker}>CUSTODY OPERATIONS</p>
+            <h1 id="access-title">Welcome to<br />CustodyOS!</h1>
+            <p className={styles.intro}>Create your account to get ahead of settlement risk.</p>
+
+            <form
+              className={`${styles.loginForm} ${styles.registrationForm}`}
+              autoComplete="off"
+              onSubmit={async (event) => {
+                event.preventDefault();
+                if (isRegistering) return;
+
+                const formData = new FormData(event.currentTarget);
+                const username = String(formData.get("registration-email") ?? "").trim();
+                const password = String(formData.get("registration-password") ?? "");
+
+                setIsRegistering(true);
+                setRegistrationError("");
+                setManualCodeVisible(false);
+                setQrCodeDataUrl("");
+                try {
+                  const response = await fetch("/api/users/register", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ username, password: sha256(password) }),
+                  });
+                  const result: unknown = await response.json();
+                  if (!response.ok) {
+                    setRegistrationError(apiErrorMessage(result, "Unable to start registration. Please try again."));
+                    return;
+                  }
+                  if (
+                    !isRecord(result) ||
+                    result.ok !== true ||
+                    !isRecord(result.data) ||
+                    typeof result.data.registrationId !== "string" ||
+                    typeof result.data.otpSecret !== "string" ||
+                    typeof result.data.expiresAt !== "string"
+                  ) {
+                    throw new Error("Registration endpoint returned an invalid response.");
+                  }
+
+                  setRegistrationId(result.data.registrationId);
+                  setRegistrationUsername(username);
+                  setRegistrationSecret(result.data.otpSecret);
+                  setRegistrationExpiresAt(result.data.expiresAt);
+                  setRegistrationStep("mfa");
+                  await generateRegistrationQrCode(username, result.data.otpSecret);
+                } catch {
+                  setRegistrationError("Unable to start registration right now. Check your connection and try again.");
+                } finally {
+                  setIsRegistering(false);
+                }
+              }}
+            >
+              <label className={styles.field}>
+                <span>WORK EMAIL</span>
+                <input type="email" name="registration-email" autoComplete="email" placeholder="name@institution.com" required />
+              </label>
+              <label className={styles.field}>
+                <span>PASSWORD</span>
+                <input type="password" name="registration-password" autoComplete="new-password" placeholder="Enter a sample password" minLength={8} required />
+              </label>
+              {registrationError && <p className={styles.loginError} role="alert">{registrationError}</p>}
+              <button className={styles.enterButton} type="submit" disabled={isRegistering}>
+                {isRegistering ? "Creating registration…" : "Sign up"} <span aria-hidden="true">→</span>
+              </button>
+            </form>
+
+            <button className={`${styles.signupButton} ${styles.registrationBack}`} type="button" onClick={() => setRegistrationStep("login")}>
+              Go back
+            </button>
+          </div>
+        )}
+
+        {registrationStep === "mfa" && (
+          <div className={styles.mfaBody}>
+            <h1 id="access-title">Register MFA</h1>
+            <div className={styles.mfaCard}>
+              <div className={styles.qrSection}>
+                {qrCodeDataUrl ? (
+                  <img
+                    className={styles.qrImage}
+                    src={qrCodeDataUrl}
+                    width="251"
+                    height="251"
+                    alt={`Authenticator QR code for ${registrationUsername}`}
+                  />
+                ) : (
+                  <div className={styles.qrPlaceholder} role="status">
+                    {isGeneratingQr ? "Generating authenticator QR code…" : "QR code unavailable"}
+                  </div>
+                )}
+                <button
+                  className={styles.manualCodeButton}
+                  type="button"
+                  aria-expanded={manualCodeVisible}
+                  onClick={() => setManualCodeVisible((visible) => !visible)}
+                >
+                  {manualCodeVisible ? "Hide manual code" : "Show manual code"}
+                </button>
+                {manualCodeVisible && (
+                  <div className={styles.manualCode}>
+                    <span>SETUP KEY</span>
+                    <code>{registrationSecret}</code>
+                  </div>
+                )}
+              </div>
+
+              <form
+                className={styles.mfaForm}
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  if (isVerifyingRegistration) return;
+
+                  const formData = new FormData(event.currentTarget);
+                  const otpCode = String(formData.get("registration-otp") ?? "");
+                  setIsVerifyingRegistration(true);
+                  setRegistrationError("");
+                  try {
+                    const response = await fetch("/api/users/register/verify", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ registrationId, otpCode }),
+                    });
+                    const result: unknown = await response.json();
+                    if (!response.ok) {
+                      setRegistrationError(apiErrorMessage(result, "Unable to verify your authenticator code. Please try again."));
+                      return;
+                    }
+                    if (
+                      !isRecord(result) ||
+                      result.ok !== true ||
+                      !isRecord(result.data) ||
+                      typeof result.data.userId !== "string"
+                    ) {
+                      throw new Error("Registration verification endpoint returned an invalid response.");
+                    }
+                    window.sessionStorage.setItem("userid", result.data.userId);
+                    router.push("/");
+                  } catch {
+                    setRegistrationError("Unable to verify your authenticator code right now. Check your connection and try again.");
+                  } finally {
+                    setIsVerifyingRegistration(false);
+                  }
+                }}
+              >
+                <label className={styles.field}>
+                  <span>ONE TIME PASSWORD</span>
+                  <input
+                    type="text"
+                    name="registration-otp"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    placeholder="123-456"
+                    pattern="[0-9]{3}-?[0-9]{3}"
+                    maxLength={7}
+                    required
+                  />
+                </label>
+                {registrationError && <p className={styles.loginError} role="alert">{registrationError}</p>}
+                <button className={`${styles.enterButton} ${styles.mfaSubmit}`} type="submit" disabled={isVerifyingRegistration || !registrationId}>
+                  {isVerifyingRegistration ? "Verifying…" : "Submit"}
+                </button>
+              </form>
+            </div>
+            <p className={styles.mfaPreviewNote}>
+              Registration expires {registrationExpiresAt ? new Date(registrationExpiresAt).toLocaleTimeString() : "soon"}.
+            </p>
+            <button className={styles.mfaBack} type="button" onClick={() => setRegistrationStep("details")}>
+              Back to account details
+            </button>
+          </div>
+        )}
       </section>
 
       <section className={styles.stage} aria-label="Synthetic settlement case preview">
