@@ -13,6 +13,8 @@ import { downloadTopologySvg } from "./topology-export";
 import { TopologyPanel } from "./topology-panel";
 import { CreatePolicy } from "./create-policy";
 import { CategorizedInventory, ConsolidatedInventory, inventoryViews, type InventoryView, type PortfolioDataset } from "./portfolio-inventory";
+import { DatasetImportDialog } from "./dataset-import-dialog";
+import type { ImportDatasetResponse } from "@/contracts";
 
 type Page = "Overview" | "Digital Twin" | "Portfolios" | "Transactions" | "Policy Engine" | "Reporting";
 
@@ -393,7 +395,7 @@ function EntityInspector({ selected, selectedActivity, onSelectActivity, assets,
   );
 }
 
-function Overview({ data, datasets, onNewTransfer }: { data: ExampleData; datasets: PortfolioDataset[]; onNewTransfer: () => void }) {
+function Overview({ data, datasets, onNewTransfer, onImportDataset, importNotice }: { data: ExampleData; datasets: PortfolioDataset[]; onNewTransfer: () => void; onImportDataset: () => void; importNotice: string }) {
   const [activeChartPoint, setActiveChartPoint] = useState<number | null>(null);
   const latestDataset = [...datasets].sort((left, right) => Date.parse(right.snapshot.asOf) - Date.parse(left.snapshot.asOf))[0];
   const snapshot = latestDataset?.snapshot;
@@ -420,7 +422,8 @@ function Overview({ data, datasets, onNewTransfer }: { data: ExampleData; datase
   const transactionRows = data.transactions.slice(0, 4);
   return (
     <main className="page">
-      <PageHeading eyebrow={`COMMAND CENTER / ${snapshotDate}`} title="Operational Overview" description="Imported custody balances, settlement obligations, and workspace transfers from your latest snapshot." actions={<button className="button primary" onClick={onNewTransfer}>New transfer</button>} />
+      <PageHeading eyebrow={`COMMAND CENTER / ${snapshotDate}`} title="Operational Overview" description="Imported custody balances, settlement obligations, and workspace transfers from your latest snapshot." actions={<><button type="button" className="button secondary" onClick={onImportDataset}>Import dataset</button><button type="button" className="button primary" onClick={onNewTransfer}>New transfer</button></>} />
+      {importNotice && <p className="dataset-import-notice" role="status">{importNotice}</p>}
       <div className="overview-grid">
         <section className="exposure-panel">
           <div className="panel-top"><p className="eyebrow">SETTLED CASH · USD</p><span>{latestDataset?.dataset.name ?? "NO DATASET"}</span></div>
@@ -951,6 +954,8 @@ export default function App() {
   const refreshSequence = useRef(0);
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferNotice, setTransferNotice] = useState("");
+  const [datasetImportOpen, setDatasetImportOpen] = useState(false);
+  const [datasetImportNotice, setDatasetImportNotice] = useState("");
   useEffect(() => {
     const userId = window.sessionStorage.getItem("userid")?.trim() ?? "";
     if (!userId) {
@@ -1039,6 +1044,12 @@ export default function App() {
     }
   }, [USER_ID, router]);
 
+  const onDatasetImported = useCallback((result: Extract<ImportDatasetResponse, { ok: true }>['data']) => {
+    setDatasetImportOpen(false);
+    setDatasetImportNotice(`${result.dataset.name} imported · ${result.imported.accounts} accounts · ${result.imported.obligations} obligations. Dashboard data refreshed.`);
+    void refresh(page === "Digital Twin", true);
+  }, [page, refresh]);
+
   useEffect(() => {
     if (!USER_ID) return;
     void refresh(page === "Digital Twin", true);
@@ -1082,7 +1093,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [commandOpen]);
   const pages: Record<Page, React.ReactNode> = {
-    "Overview": <Overview data={financialData} datasets={portfolioDatasets} onNewTransfer={openTransfer} />,
+    "Overview": <Overview data={financialData} datasets={portfolioDatasets} onNewTransfer={openTransfer} onImportDataset={() => { setDatasetImportNotice(""); setDatasetImportOpen(true); }} importNotice={datasetImportNotice} />,
     "Digital Twin": <DigitalTwin data={financialData} reviews={reviews} refreshError={twinRefreshError} />,
     "Portfolios": <Portfolios datasets={portfolioDatasets} userId={USER_ID} onOpenTwin={() => setPage("Digital Twin")} />,
     "Transactions": <Transactions data={financialData} datasets={portfolioDatasets} onNewTransfer={openTransfer} notice={transferNotice} />,
@@ -1099,6 +1110,7 @@ export default function App() {
       {pages[page]}
       <footer className="statusbar"><span>DATASETS <b>{portfolioDatasets.length}</b></span><span>SNAPSHOT <b>{portfolioDatasets.length ? new Date([...portfolioDatasets].sort((left, right) => Date.parse(right.snapshot.asOf) - Date.parse(left.snapshot.asOf))[0].snapshot.asOf).toLocaleString() : "NOT LOADED"}</b></span><span>POLICY RULES <b>{financialData.policies.length}</b></span></footer>
       {commandOpen && <CommandPalette close={() => setCommandOpen(false)} setPage={setPage} />}
+      {datasetImportOpen && <DatasetImportDialog latestSnapshotAsOf={portfolioDatasets.reduce<string | null>((latest, dataset) => !latest || Date.parse(dataset.snapshot.asOf) > Date.parse(latest) ? dataset.snapshot.asOf : latest, null)} onClose={() => setDatasetImportOpen(false)} onImported={onDatasetImported} />}
       {transferOpen && (financialDataLoaded
         ? <TransferDialog userId={USER_ID} assets={financialData.assets} onClose={closeTransfer} onCreated={onTransferCreated} />
         : <div className="transfer-overlay" onMouseDown={closeTransfer}><section className="transfer-dialog" role="dialog" aria-modal="true" aria-label="New transfer" onMouseDown={event => event.stopPropagation()}><p role="status">{financialDataError || "Loading demo inventory…"}</p><button type="button" className="button secondary" onClick={closeTransfer}>Close</button></section></div>)}

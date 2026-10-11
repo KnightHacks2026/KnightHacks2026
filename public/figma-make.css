@@ -353,6 +353,18 @@ h1 { margin-bottom: 4px; font: 400 29px/1.12 "Newsreader", serif; letter-spacing
 .transfer-notice { padding: 12px 15px; margin: 0 0 16px; border: 1px solid #b7a4c9; background: #f2ecf7; color: #4e3569; font-size: 11px; }
 .transfer-actions { display: flex; justify-content: end; gap: 9px; margin-top: 25px; }
 .transfer-actions .button:disabled { opacity: .6; cursor: wait; }
+.dataset-import-notice { padding: 11px 14px; margin: -8px 0 18px; border: 1px solid #8bb69f; background: #e8f2eb; color: #245e46; font-size: 11px; line-height: 1.45; }
+.dataset-import-dialog { width: min(560px, 100%); }
+.dataset-import-format { display: grid; gap: 5px; padding: 13px 14px; border: 1px solid var(--line); background: var(--bg); }
+.dataset-import-format strong { color: var(--text); font: 8px "IBM Plex Mono"; letter-spacing: .08em; text-transform: uppercase; }
+.dataset-import-format span { color: var(--text); font-size: 11px; font-weight: 600; }
+.dataset-import-format small,.dataset-import-file-name { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.dataset-import-label { display: block; margin: 17px 0 7px; color: var(--text); font-size: 10px; font-weight: 600; }
+.transfer-dialog input.dataset-import-file { height: auto; min-height: 42px; padding: 9px; }
+.dataset-import-file-name { min-height: 15px; margin: 7px 0 0; }
+.dataset-import-actions { flex-wrap: wrap; }
+.dataset-import-actions .button:nth-last-child(2) { margin-right: auto; }
+@media (max-width: 560px) { .dataset-import-actions { justify-content: stretch; }.dataset-import-actions .button { flex: 1 1 auto; }.dataset-import-actions .button:nth-last-child(2) { margin-right: 0; } }
 .policy-dialog { width: min(560px, 100%); }
 .policy-rule-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .policy-rule-fields > div { display: grid; min-width: 0; }
