@@ -24,6 +24,10 @@ export interface ExamplePolicy {
   rule: string;
   state: string;
   coverage: number;
+  /** Present for user-created demo amount-threshold policies. */
+  asset?: string;
+  threshold?: string;
+  action?: string;
 }
 
 export interface ExampleTwinNode {

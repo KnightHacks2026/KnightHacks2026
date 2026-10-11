@@ -124,9 +124,23 @@ const schema = `
     BEGIN SELECT RAISE(ABORT, 'transfer audit is append-only'); END;
   CREATE TABLE IF NOT EXISTS example_policies (
     user_id TEXT NOT NULL, position INTEGER NOT NULL, name TEXT NOT NULL, scope TEXT NOT NULL,
-    rule TEXT NOT NULL, state TEXT NOT NULL, coverage REAL NOT NULL,
+    rule TEXT NOT NULL, state TEXT NOT NULL, coverage REAL NOT NULL, archived_from_state TEXT,
     PRIMARY KEY(user_id, name), UNIQUE(user_id, position)
   );
+  CREATE TABLE IF NOT EXISTS example_policy_rules (
+    user_id TEXT NOT NULL, policy_name TEXT NOT NULL, rule_type TEXT NOT NULL,
+    asset TEXT NOT NULL, threshold TEXT NOT NULL, action TEXT NOT NULL, effective_at TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY(user_id, policy_name),
+    FOREIGN KEY(user_id, policy_name) REFERENCES example_policies(user_id, name)
+  );
+  CREATE TABLE IF NOT EXISTS example_policy_audit (
+    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, policy_name TEXT NOT NULL,
+    occurred_at TEXT NOT NULL, action TEXT NOT NULL, details TEXT NOT NULL
+  );
+  CREATE TRIGGER IF NOT EXISTS example_policy_audit_no_update BEFORE UPDATE ON example_policy_audit
+    BEGIN SELECT RAISE(ABORT, 'policy audit is append-only'); END;
+  CREATE TRIGGER IF NOT EXISTS example_policy_audit_no_delete BEFORE DELETE ON example_policy_audit
+    BEGIN SELECT RAISE(ABORT, 'policy audit is append-only'); END;
   CREATE TABLE IF NOT EXISTS example_twin_nodes (
     user_id TEXT NOT NULL, position INTEGER NOT NULL, id TEXT NOT NULL, x REAL NOT NULL, y REAL NOT NULL,
     r REAL NOT NULL, sub TEXT NOT NULL, type TEXT NOT NULL,
@@ -148,6 +162,17 @@ async function openDatabase(): Promise<DatabaseSync> {
   const connection = new DatabaseSync(databasePath);
   connection.exec("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
   connection.exec(schema);
+  const policyColumns = connection.prepare("PRAGMA table_info(example_policies)").all()
+    .map(column => String(column.name));
+  if (!policyColumns.includes("archived_from_state")) {
+    connection.exec("ALTER TABLE example_policies ADD COLUMN archived_from_state TEXT");
+  }
+  const policyRuleColumns = connection.prepare("PRAGMA table_info(example_policy_rules)").all()
+    .map(column => String(column.name));
+  if (!policyRuleColumns.includes("effective_at")) {
+    connection.exec("ALTER TABLE example_policy_rules ADD COLUMN effective_at TEXT NOT NULL DEFAULT ''");
+  }
+  connection.prepare("UPDATE example_policy_rules SET effective_at = '1970-01-01T00:00:00.000Z' WHERE effective_at = ''").run();
   seedExampleData(connection, demoUserId());
   return connection;
 }
@@ -195,6 +220,7 @@ export class DatasetConflictError extends Error {}
 
 function writeExampleData(database: DatabaseSync, userId: string, data: ExampleData) {
   database.prepare("DELETE FROM example_twin_edges WHERE user_id = ?").run(userId);
+  database.prepare("DELETE FROM example_policy_rules WHERE user_id = ?").run(userId);
   for (const table of ["example_assets", "example_transactions", "example_policies", "example_twin_nodes"] as const) {
     database.prepare(`DELETE FROM ${table} WHERE user_id = ?`).run(userId);
   }
@@ -203,7 +229,8 @@ function writeExampleData(database: DatabaseSync, userId: string, data: ExampleD
   data.assets.forEach((row, position) => asset.run(userId, position, row.symbol, row.name, row.balance, row.value, row.change, row.share));
   const transaction = database.prepare("INSERT INTO example_transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
   data.transactions.forEach((row, position) => transaction.run(userId, position, row.id, row.time, row.type, row.asset, row.amount, row.value, row.route, row.status));
-  const policy = database.prepare("INSERT INTO example_policies VALUES (?, ?, ?, ?, ?, ?, ?)");
+  const policy = database.prepare(`INSERT INTO example_policies
+    (user_id, position, name, scope, rule, state, coverage) VALUES (?, ?, ?, ?, ?, ?, ?)`);
   data.policies.forEach((row, position) => policy.run(userId, position, row.name, row.scope, row.rule, row.state, row.coverage));
   const node = database.prepare("INSERT INTO example_twin_nodes VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
   data.nodes.forEach((row, position) => node.run(userId, position, row.id, row.x, row.y, row.r, row.sub, row.type));
@@ -232,13 +259,115 @@ export async function getExampleData(userId = demoUserId()): Promise<ExampleData
     .map(row => ({ symbol: String(row.symbol), name: String(row.name), balance: String(row.balance), value: String(row.value), change: String(row.change), share: Number(row.share) }));
   const transactions = database.prepare("SELECT id, time, type, asset, amount, value, route, status FROM example_transactions WHERE user_id = ? ORDER BY position").all(userId)
     .map(row => ({ id: String(row.id), time: String(row.time), type: String(row.type), asset: String(row.asset), amount: String(row.amount), value: String(row.value), route: String(row.route), status: String(row.status) }));
-  const policies = database.prepare("SELECT name, scope, rule, state, coverage FROM example_policies WHERE user_id = ? ORDER BY position").all(userId)
-    .map(row => ({ name: String(row.name), scope: String(row.scope), rule: String(row.rule), state: String(row.state), coverage: Number(row.coverage) }));
+  const policies = database.prepare(`SELECT p.name, p.scope, p.rule, p.state, p.coverage, r.asset, r.threshold, r.action
+    FROM example_policies p LEFT JOIN example_policy_rules r
+      ON r.user_id = p.user_id AND r.policy_name = p.name
+    WHERE p.user_id = ? ORDER BY p.position`).all(userId)
+    .map(row => ({
+      name: String(row.name), scope: String(row.scope), rule: String(row.rule), state: String(row.state), coverage: Number(row.coverage),
+      ...(row.asset == null ? {} : { asset: String(row.asset), threshold: String(row.threshold), action: String(row.action) }),
+    }));
   const nodes = database.prepare("SELECT id, x, y, r, sub, type FROM example_twin_nodes WHERE user_id = ? ORDER BY position").all(userId)
     .map(row => ({ id: String(row.id), x: Number(row.x), y: Number(row.y), r: Number(row.r), sub: String(row.sub), type: String(row.type) }));
   const edges = database.prepare("SELECT source, target FROM example_twin_edges WHERE user_id = ? ORDER BY position").all(userId)
     .map(row => [String(row.source), String(row.target)] as [string, string]);
   return { assets, transactions, policies, nodes, edges };
+}
+
+export class PolicyNameConflictError extends Error {}
+export class PolicyArchiveConflictError extends Error {}
+
+export async function createExamplePolicy(input: {
+  userId: string;
+  name: string;
+  asset: string;
+  threshold: string;
+  archivePolicyNames: string[];
+}): Promise<ExampleData["policies"][number]> {
+  const database = await getDatabase();
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const duplicate = database.prepare(`SELECT 1 FROM example_policies
+      WHERE user_id = ? AND LOWER(name) = LOWER(?)`).get(input.userId, input.name);
+    if (duplicate) throw new PolicyNameConflictError("A policy with this name already exists.");
+
+    const archiveNames = [...new Set(input.archivePolicyNames)];
+    for (const policyName of archiveNames) {
+      const overlapping = database.prepare(`SELECT p.state FROM example_policies p
+        JOIN example_policy_rules r ON r.user_id = p.user_id AND r.policy_name = p.name
+        WHERE p.user_id = ? AND p.name = ? AND p.state = 'Enforced'
+          AND r.rule_type = 'amount_threshold' AND r.asset = ?`).get(input.userId, policyName, input.asset);
+      if (!overlapping) {
+        throw new PolicyArchiveConflictError(`Policy “${policyName}” is no longer an enforced threshold rule for ${input.asset}. Refresh and try again.`);
+      }
+    }
+
+    const position = Number((database.prepare(
+      "SELECT COALESCE(MAX(position), -1) + 1 AS position FROM example_policies WHERE user_id = ?",
+    ).get(input.userId) as { position: number }).position);
+    const scope = "All new transfers";
+    const rule = `${input.asset} amount > ${input.threshold} · Human approval`;
+    const action = "human_approval";
+    const effectiveAt = new Date().toISOString();
+    const archivePolicy = database.prepare(`UPDATE example_policies SET archived_from_state = state, state = 'Archived'
+      WHERE user_id = ? AND name = ? AND state = 'Enforced'`);
+    const auditPolicyArchive = database.prepare(`INSERT INTO example_policy_audit
+      (id, user_id, policy_name, occurred_at, action, details)
+      VALUES (?, ?, ?, ?, 'archived', ?)`);
+    for (const policyName of archiveNames) {
+      const archived = archivePolicy.run(input.userId, policyName);
+      if (archived.changes !== 1) throw new PolicyArchiveConflictError(`Policy “${policyName}” changed while the new policy was being saved. Refresh and try again.`);
+      auditPolicyArchive.run(`policy-audit-${randomUUID()}`, input.userId, policyName, effectiveAt, JSON.stringify({ replacedBy: input.name }));
+    }
+    database.prepare(`INSERT INTO example_policies (user_id, position, name, scope, rule, state, coverage)
+      VALUES (?, ?, ?, ?, ?, 'Enforced', 100)`).run(input.userId, position, input.name, scope, rule);
+    database.prepare(`INSERT INTO example_policy_rules
+      (user_id, policy_name, rule_type, asset, threshold, action, effective_at)
+      VALUES (?, ?, 'amount_threshold', ?, ?, ?, ?)`)
+      .run(input.userId, input.name, input.asset, input.threshold, action, effectiveAt);
+    database.prepare(`INSERT INTO example_policy_audit
+      (id, user_id, policy_name, occurred_at, action, details)
+      VALUES (?, ?, ?, ?, 'created', ?)`)
+      .run(`policy-audit-${randomUUID()}`, input.userId, input.name, effectiveAt, JSON.stringify({ asset: input.asset, threshold: input.threshold, state: "Enforced" }));
+    database.exec("COMMIT");
+    return { name: input.name, scope, rule, state: "Enforced", coverage: 100, asset: input.asset, threshold: input.threshold, action };
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export async function setExamplePolicyArchived(userId: string, name: string, archived: boolean) {
+  const database = await getDatabase();
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const current = database.prepare(`SELECT state, archived_from_state FROM example_policies
+      WHERE user_id = ? AND name = ?`).get(userId, name) as { state: string; archived_from_state: string | null } | undefined;
+    if (!current) {
+      database.exec("ROLLBACK");
+      return null;
+    }
+    if (archived && current.state === "Archived") {
+      database.exec("ROLLBACK");
+      return { ok: false as const, reason: "ALREADY_ARCHIVED" as const };
+    }
+    if (!archived && current.state !== "Archived") {
+      database.exec("ROLLBACK");
+      return { ok: false as const, reason: "NOT_ARCHIVED" as const };
+    }
+    const nextState = archived ? "Archived" : current.archived_from_state ?? "Review";
+    database.prepare(`UPDATE example_policies SET state = ?, archived_from_state = ?
+      WHERE user_id = ? AND name = ?`).run(nextState, archived ? current.state : null, userId, name);
+    database.prepare(`INSERT INTO example_policy_audit
+      (id, user_id, policy_name, occurred_at, action, details)
+      VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(`policy-audit-${randomUUID()}`, userId, name, new Date().toISOString(), archived ? "archived" : "restored", JSON.stringify({ from: current.state, to: nextState }));
+    database.exec("COMMIT");
+    return { ok: true as const, state: nextState };
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 export async function saveExampleData(data: ExampleData): Promise<void> {
@@ -336,6 +465,15 @@ function sourceOwned(database: DatabaseSync, transfer: ReviewTransfer): boolean 
     .get(transfer.userId, transfer.asset));
 }
 
+function amountThresholdPolicies(database: DatabaseSync, userId: string) {
+  return database.prepare(`SELECT p.name, r.asset, r.threshold, r.effective_at FROM example_policy_rules r
+    JOIN example_policies p ON p.user_id = r.user_id AND p.name = r.policy_name
+    WHERE r.user_id = ? AND r.rule_type = 'amount_threshold' AND p.state = 'Enforced'
+    ORDER BY p.position`).all(userId).map(row => ({
+      name: String(row.name), asset: String(row.asset), threshold: String(row.threshold), effectiveAt: String(row.effective_at),
+    }));
+}
+
 export async function getTransferReviews(userId = demoUserId()) {
   const database = await getDatabase();
   const transfers = database.prepare(`SELECT r.* FROM example_transfer_requests r
@@ -348,7 +486,8 @@ export async function getTransferReviews(userId = demoUserId()) {
     reason: String(row.reason), evaluation: JSON.parse(String(row.evaluation_json)) as PolicyEvaluation,
     revisionBefore: Number(row.revision_before), revisionAfter: Number(row.revision_after),
   }));
-  return { transfers: transfers.map(transfer => ({ ...transfer, evaluation: evaluateTransfer(transfer, sourceOwned(database, transfer)) })), audit };
+  const policies = amountThresholdPolicies(database, userId);
+  return { transfers: transfers.map(transfer => ({ ...transfer, evaluation: evaluateTransfer(transfer, sourceOwned(database, transfer), policies) })), audit };
 }
 
 export async function decideTransfer(input: {
@@ -368,7 +507,7 @@ export async function decideTransfer(input: {
     if (transfer.status !== "Pending approval" || transfer.revision !== input.expectedRevision) {
       database.exec("ROLLBACK"); return { ok: false, reason: "CONFLICT" };
     }
-    const evaluation = evaluateTransfer(transfer, sourceOwned(database, transfer));
+    const evaluation = evaluateTransfer(transfer, sourceOwned(database, transfer), amountThresholdPolicies(database, input.userId));
     if (input.decision === "approve" && !evaluation.canApprove) {
       database.exec("ROLLBACK"); return { ok: false, reason: "EVIDENCE_REQUIRED" };
     }
