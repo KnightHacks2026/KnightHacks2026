@@ -562,8 +562,10 @@ function PolicyEngine({ data, onDecision }: { data: ExampleData; onDecision: (id
   );
 }
 
-function Reporting() {
+function Reporting({ data }: { data: ExampleData }) {
   const [visibleMonth, setVisibleMonth] = useState(() => new Date(Date.UTC(2026, 9, 1)));
+  const [reportOpen, setReportOpen] = useState(false);
+  const [generatedAt, setGeneratedAt] = useState("");
   const year = visibleMonth.getUTCFullYear();
   const month = visibleMonth.getUTCMonth();
   const firstDayOffset = (visibleMonth.getUTCDay() + 6) % 7;
@@ -580,10 +582,22 @@ function Reporting() {
   };
   const changeMonth = (increment: number) => setVisibleMonth(current =>
     new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + increment, 1)));
+  const transactionValue = data.transactions.reduce((total, transaction) =>
+    transaction.value.trim() === "—" ? total : total + parseUsdValue(transaction.value, transaction.id), 0);
+  const completedTransactions = data.transactions.filter(transaction => transaction.status === "Completed").length;
+  const attentionTransactions = data.transactions.length - completedTransactions;
+  const enforcedPolicies = data.policies.filter(policy => policy.state === "Enforced").length;
+  const averageCoverage = data.policies.length
+    ? Math.round(data.policies.reduce((total, policy) => total + policy.coverage, 0) / data.policies.length)
+    : 0;
+  const openReport = () => {
+    setGeneratedAt(new Date().toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }));
+    setReportOpen(true);
+  };
 
   return (
     <main className="page reporting-page">
-      <PageHeading eyebrow="REPORTING / SAMPLE SCHEDULE" title="Evidence & Reporting" description="Sample reporting dates and evidence queue. Connect an imported workspace to show its actual obligations and evidence status." actions={<button className="button primary">Generate report</button>} />
+      <PageHeading eyebrow="REPORTING / SAMPLE SCHEDULE" title="Evidence & Reporting" description="Sample reporting dates and evidence queue. Calendar navigation changes the schedule view; snapshot exports use all currently loaded workspace data." actions={<button className="button primary" onClick={openReport}>Generate snapshot report</button>} />
       <div className="report-layout">
         <section className="report-calendar">
           <div className="report-month"><button type="button" aria-label="Previous month" onClick={() => changeMonth(-1)}>←</button><h2>{monthLabel} · Sample</h2><button type="button" aria-label="Next month" onClick={() => changeMonth(1)}>→</button></div>
@@ -604,6 +618,33 @@ function Reporting() {
           <div className="assurance-seal"><Icon name="check" size={22} /><span><strong>Demo evidence queue</strong><small>No connected evidence source</small></span></div>
         </aside>
       </div>
+      {reportOpen && <div className="report-overlay" onMouseDown={() => setReportOpen(false)}>
+        <section className="report-preview" role="dialog" aria-modal="true" aria-labelledby="report-preview-title" onMouseDown={event => event.stopPropagation()}>
+          <header className="report-preview-head">
+            <div><p className="eyebrow">CUSTODYOS / OPERATIONS EVIDENCE</p><h2 id="report-preview-title">Workspace snapshot report</h2><span>October 2026 reference period · ACME Bank</span></div>
+            <button type="button" aria-label="Close report preview" onClick={() => setReportOpen(false)}>×</button>
+          </header>
+          <div className="report-document">
+            <div className="report-period"><span>SNAPSHOT REFERENCE PERIOD</span><strong>October 2026</strong></div>
+            <div className="report-document-meta"><span>GENERATED {generatedAt}</span><span>WORKSPACE demo-user</span><span>REFERENCE MONTH OCTOBER 2026</span><span>STATUS SAMPLE DATA</span></div>
+            <section className="report-executive">
+              <p className="eyebrow">EXECUTIVE SUMMARY</p>
+              <div className="report-kpis">
+                <div><span>ASSETS UNDER CUSTODY</span><strong>{compactUsdFormatter.format(sumAssetValues(data.assets))}</strong><small>{data.assets.length} asset classes</small></div>
+                <div><span>LOADED ACTIVITY</span><strong>{compactUsdFormatter.format(transactionValue)}</strong><small>{data.transactions.length} transactions</small></div>
+                <div><span>REQUIRES ATTENTION</span><strong>{attentionTransactions}</strong><small>{completedTransactions} completed</small></div>
+                <div><span>POLICY COVERAGE</span><strong>{averageCoverage}%</strong><small>{enforcedPolicies} of {data.policies.length} enforced</small></div>
+              </div>
+            </section>
+            <div className="report-columns">
+              <section><p className="eyebrow">TRANSACTION EVIDENCE</p>{data.transactions.slice(0, 5).map(transaction => <div className="report-evidence-row" key={transaction.id}><span><strong>{transaction.type} · {transaction.asset}</strong><small>{transaction.id} · {transaction.route}</small></span><em>{transaction.status}</em></div>)}</section>
+              <section><p className="eyebrow">POLICY CONTROLS</p>{data.policies.map(policy => <div className="report-evidence-row" key={policy.name}><span><strong>{policy.name}</strong><small>{policy.scope} · {policy.rule}</small></span><em>{policy.coverage}%</em></div>)}</section>
+            </div>
+            <div className="report-disclosure"><Icon name="check" size={18} /><span><strong>Evidence package generated from the loaded workspace</strong><small>This report always represents the October 2026 sample snapshot. Calendar navigation only changes the obligation schedule view; production exports should derive their period from immutable dataset and snapshot timestamps.</small></span></div>
+          </div>
+          <footer className="report-preview-actions"><span>Read-only export · no operational records changed</span><div><button type="button" className="button secondary" onClick={() => setReportOpen(false)}>Close</button><button type="button" className="button primary" onClick={() => window.print()}>Print / Save PDF</button></div></footer>
+        </section>
+      </div>}
     </main>
   );
 }
@@ -737,7 +778,7 @@ export default function App() {
     "Portfolios": <Portfolios data={financialData} onOpenTwin={() => setPage("Digital Twin")} />,
     "Transactions": <Transactions data={financialData} onNewTransfer={openTransfer} notice={transferNotice} />,
     "Policy Engine": <PolicyEngine data={financialData} onDecision={onPolicyDecision} />,
-    "Reporting": <Reporting />,
+    "Reporting": <Reporting data={financialData} />,
   };
   return (
     <div className="app-shell make-prototype" data-data-source="figma-demo-sample">
