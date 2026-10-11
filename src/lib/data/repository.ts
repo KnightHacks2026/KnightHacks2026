@@ -156,6 +156,15 @@ function getDatabase(): Promise<DatabaseSync> {
   return databasePromise ??= openDatabase();
 }
 
+export async function getAuthenticationOtpSecret(userId: string, passwordHash: string): Promise<string | null> {
+  const database = await getDatabase();
+  const record = database.prepare(`
+    SELECT otp_secret FROM custody_authenticate
+    WHERE user_id = ? AND password = ?
+  `).get(userId, passwordHash) as { otp_secret: string } | undefined;
+  return record?.otp_secret ?? null;
+}
+
 export interface DatasetSource {
   dataset: Dataset;
   snapshot: FinancialSnapshot;
