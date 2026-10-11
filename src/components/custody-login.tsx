@@ -30,6 +30,8 @@ const dollars = (minorUnits: bigint) => {
 const previewEmail = "analyst@institution.com";
 const previewPassword = "********";
 
+type RegistrationStep = "login" | "details" | "mfa";
+
 export default function CustodyLogin() {
   const router = useRouter();
   const [activeLeg, setActiveLeg] = useState(0);
@@ -38,6 +40,9 @@ export default function CustodyLogin() {
   const [previewPaused, setPreviewPaused] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loginError, setLoginError] = useState("");
+  const [registrationStep, setRegistrationStep] = useState<RegistrationStep>("login");
+  const [manualCodeVisible, setManualCodeVisible] = useState(false);
+  const [registrationNotice, setRegistrationNotice] = useState("");
 
   useEffect(() => {
     const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -83,78 +88,180 @@ export default function CustodyLogin() {
           <span className={styles.brandOs}>OS</span>
         </header>
 
-        <div className={styles.accessBody}>
-          <p className={styles.kicker}>CUSTODY OPERATIONS</p>
-          <h1 id="access-title">Sign in to<br />CustodyOS.</h1>
-          <p className={styles.intro}>Review settlement risk and funding options in one workspace.</p>
+        {registrationStep === "login" && (
+          <div className={styles.accessBody}>
+            <p className={styles.kicker}>CUSTODY OPERATIONS</p>
+            <h1 id="access-title">Sign in to<br />CustodyOS.</h1>
+            <p className={styles.intro}>Review settlement risk and funding options in one workspace.</p>
 
-          <form
-            className={styles.loginForm}
-            autoComplete="off"
-            onFocusCapture={() => setPreviewPaused(true)}
-            onSubmit={async (event) => {
-              event.preventDefault();
-              if (isSubmitting) return;
+            <form
+              className={styles.loginForm}
+              autoComplete="off"
+              onFocusCapture={() => setPreviewPaused(true)}
+              onSubmit={async (event) => {
+                event.preventDefault();
+                if (isSubmitting) return;
 
-              const formData = new FormData(event.currentTarget);
-              const username = String(formData.get("username") ?? "").trim();
-              const password = String(formData.get("password") ?? "");
-              const otpCode = String(formData.get("otp") ?? "");
+                const formData = new FormData(event.currentTarget);
+                const username = String(formData.get("username") ?? "").trim();
+                const password = String(formData.get("password") ?? "");
+                const otpCode = String(formData.get("otp") ?? "");
 
-              setIsSubmitting(true);
-              setLoginError("");
-              try {
-                const response = await fetch("/api/users/login", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ username, password: sha256(password), otpCode }),
-                });
-                const result: unknown = await response.json();
-                if (!response.ok) {
-                  setLoginError("Invalid username, password, or one-time password.");
-                  return;
+                setIsSubmitting(true);
+                setLoginError("");
+                try {
+                  const response = await fetch("/api/users/login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ username, password: sha256(password), otpCode }),
+                  });
+                  const result: unknown = await response.json();
+                  if (!response.ok) {
+                    setLoginError("Invalid username, password, or one-time password.");
+                    return;
+                  }
+                  if (
+                    typeof result !== "object" ||
+                    result === null ||
+                    !("ok" in result) ||
+                    result.ok !== true ||
+                    !("data" in result) ||
+                    typeof result.data !== "object" ||
+                    result.data === null ||
+                    !("userId" in result.data) ||
+                    typeof result.data.userId !== "string"
+                  ) {
+                    throw new Error("Login endpoint returned an invalid response.");
+                  }
+                  window.sessionStorage.setItem("userid", result.data.userId);
+                  router.push("/");
+                } catch {
+                  setLoginError("Unable to sign in right now. Please try again.");
+                } finally {
+                  setIsSubmitting(false);
                 }
-                if (
-                  typeof result !== "object" ||
-                  result === null ||
-                  !("ok" in result) ||
-                  result.ok !== true ||
-                  !("data" in result) ||
-                  typeof result.data !== "object" ||
-                  result.data === null ||
-                  !("userId" in result.data) ||
-                  typeof result.data.userId !== "string"
-                ) {
-                  throw new Error("Login endpoint returned an invalid response.");
-                }
-                window.sessionStorage.setItem("userid", result.data.userId);
-                router.push("/");
-              } catch {
-                setLoginError("Unable to sign in right now. Please try again.");
-              } finally {
-                setIsSubmitting(false);
-              }
-            }}
-          >
-            <label className={styles.field}>
-              <span>WORK EMAIL</span>
-              <input type="text" name="username" autoComplete="username" placeholder={previewPaused ? "name@institution.com" : emailPreview} required />
-            </label>
-            <label className={styles.field}>
-              <span>PASSWORD</span>
-              <input type="password" name="password" autoComplete="current-password" placeholder={previewPaused ? "Enter a sample password" : passwordPreview} required />
-            </label>
-            <label className={styles.field}>
-              <span>ONE TIME PASSWORD</span>
-              <input type="text" name="otp" inputMode="numeric" autoComplete="one-time-code" placeholder="123456" required />
-            </label>
-            {loginError && <p className={styles.loginError} role="alert">{loginError}</p>}
-            <button className={styles.enterButton} type="submit" disabled={isSubmitting}>
-              {isSubmitting ? "Signing in…" : "Log in"} <span aria-hidden="true">→</span>
+              }}
+            >
+              <label className={styles.field}>
+                <span>WORK EMAIL</span>
+                <input type="text" name="username" autoComplete="username" placeholder={previewPaused ? "name@institution.com" : emailPreview} required />
+              </label>
+              <label className={styles.field}>
+                <span>PASSWORD</span>
+                <input type="password" name="password" autoComplete="current-password" placeholder={previewPaused ? "Enter a sample password" : passwordPreview} required />
+              </label>
+              <label className={styles.field}>
+                <span>ONE TIME PASSWORD</span>
+                <input type="text" name="otp" inputMode="numeric" autoComplete="one-time-code" placeholder="123456" required />
+              </label>
+              {loginError && <p className={styles.loginError} role="alert">{loginError}</p>}
+              <button className={styles.enterButton} type="submit" disabled={isSubmitting}>
+                {isSubmitting ? "Signing in…" : "Log in"} <span aria-hidden="true">→</span>
+              </button>
+            </form>
+
+            <button className={styles.signupButton} type="button" onClick={() => setRegistrationStep("details")}>
+              Sign up
             </button>
-          </form>
+          </div>
+        )}
 
-        </div>
+        {registrationStep === "details" && (
+          <div className={styles.accessBody}>
+            <p className={styles.kicker}>CUSTODY OPERATIONS</p>
+            <h1 id="access-title">Welcome to<br />CustodyOS!</h1>
+            <p className={styles.intro}>Create your account to get ahead of settlement risk.</p>
+
+            <form
+              className={`${styles.loginForm} ${styles.registrationForm}`}
+              autoComplete="off"
+              onSubmit={(event) => {
+                event.preventDefault();
+                setManualCodeVisible(false);
+                setRegistrationNotice("");
+                setRegistrationStep("mfa");
+              }}
+            >
+              <label className={styles.field}>
+                <span>WORK EMAIL</span>
+                <input type="email" name="registration-email" autoComplete="email" placeholder="name@institution.com" required />
+              </label>
+              <label className={styles.field}>
+                <span>PASSWORD</span>
+                <input type="password" name="registration-password" autoComplete="new-password" placeholder="Enter a sample password" minLength={8} required />
+              </label>
+              <button className={styles.enterButton} type="submit">
+                Sign up <span aria-hidden="true">→</span>
+              </button>
+            </form>
+
+            <button className={`${styles.signupButton} ${styles.registrationBack}`} type="button" onClick={() => setRegistrationStep("login")}>
+              Go back
+            </button>
+          </div>
+        )}
+
+        {registrationStep === "mfa" && (
+          <div className={styles.mfaBody}>
+            <h1 id="access-title">Register MFA</h1>
+            <div className={styles.mfaCard}>
+              <div className={styles.qrSection}>
+                <img
+                  className={styles.qrImage}
+                  src="/images/custodyos-register-qr.png"
+                  width="251"
+                  height="251"
+                  alt="Sample authenticator QR code for visual preview only"
+                />
+                <button
+                  className={styles.manualCodeButton}
+                  type="button"
+                  aria-expanded={manualCodeVisible}
+                  onClick={() => setManualCodeVisible((visible) => !visible)}
+                >
+                  {manualCodeVisible ? "Hide manual code" : "Show manual code"}
+                </button>
+                {manualCodeVisible && (
+                  <p className={styles.manualCodeNote}>
+                    Manual setup is unavailable in this visual-only preview.
+                  </p>
+                )}
+              </div>
+
+              <form
+                className={styles.mfaForm}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  setRegistrationNotice("This visual preview is not connected to account creation. No account was created.");
+                }}
+              >
+                <label className={styles.field}>
+                  <span>ONE TIME PASSWORD</span>
+                  <input
+                    type="text"
+                    name="registration-otp"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    placeholder="123-456"
+                    pattern="[0-9]{3}-?[0-9]{3}"
+                    maxLength={7}
+                    required
+                  />
+                </label>
+                <button className={`${styles.enterButton} ${styles.mfaSubmit}`} type="submit">
+                  Submit
+                </button>
+                {registrationNotice && <p className={styles.mfaNotice} role="status">{registrationNotice}</p>}
+              </form>
+            </div>
+            <p className={styles.mfaPreviewNote}>
+              Visual preview only; no account or MFA setup is created.
+            </p>
+            <button className={styles.mfaBack} type="button" onClick={() => setRegistrationStep("details")}>
+              Back to account details
+            </button>
+          </div>
+        )}
       </section>
 
       <section className={styles.stage} aria-label="Synthetic settlement case preview">
