@@ -15,8 +15,15 @@ import { CreatePolicy } from "./create-policy";
 import { CategorizedInventory, ConsolidatedInventory, inventoryViews, type InventoryView, type PortfolioDataset } from "./portfolio-inventory";
 import { DatasetImportDialog } from "./dataset-import-dialog";
 import type { ImportDatasetResponse } from "@/contracts";
+import { ObligationRiskReview } from "./obligation-risk-review";
 
 type Page = "Overview" | "Digital Twin" | "Portfolios" | "Transactions" | "Policy Engine" | "Reporting";
+type TransactionSource = "transfer-request" | "synthetic-sample";
+
+function transactionSource(transactionId: string, reviews: TransferReviews | null): TransactionSource | "classifying" {
+  if (!reviews) return "classifying";
+  return reviews.transfers.some(transfer => transfer.id === transactionId) ? "transfer-request" : "synthetic-sample";
+}
 
 const emptyFinancialData: ExampleData = { assets: [], transactions: [], policies: [], nodes: [], edges: [] };
 
@@ -395,7 +402,7 @@ function EntityInspector({ selected, selectedActivity, onSelectActivity, assets,
   );
 }
 
-function Overview({ data, datasets, onNewTransfer, onImportDataset, importNotice }: { data: ExampleData; datasets: PortfolioDataset[]; onNewTransfer: () => void; onImportDataset: () => void; importNotice: string }) {
+function Overview({ data, datasets, reviews, onReviewObligation, onNewTransfer, onImportDataset, importNotice }: { data: ExampleData; datasets: PortfolioDataset[]; reviews: TransferReviews | null; onReviewObligation: (datasetId: string, obligationId: string) => void; onNewTransfer: () => void; onImportDataset: () => void; importNotice: string }) {
   const [activeChartPoint, setActiveChartPoint] = useState<number | null>(null);
   const latestDataset = [...datasets].sort((left, right) => Date.parse(right.snapshot.asOf) - Date.parse(left.snapshot.asOf))[0];
   const snapshot = latestDataset?.snapshot;
@@ -419,7 +426,8 @@ function Overview({ data, datasets, onNewTransfer, onImportDataset, importNotice
   const snapshotDate = snapshot
     ? new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(snapshot.asOf)) + " UTC"
     : "No imported snapshot";
-  const transactionRows = data.transactions.slice(0, 4);
+  const requestIds = new Set(reviews?.transfers.map(transfer => transfer.id) ?? []);
+  const transactionRows = data.transactions.filter(transaction => requestIds.has(transaction.id)).slice(0, 4);
   return (
     <main className="page">
       <PageHeading eyebrow={`COMMAND CENTER / ${snapshotDate}`} title="Operational Overview" description="Imported custody balances, settlement obligations, and workspace transfers from your latest snapshot." actions={<><button type="button" className="button secondary" onClick={onImportDataset}>Import dataset</button><button type="button" className="button primary" onClick={onNewTransfer}>New transfer</button></>} />
@@ -450,11 +458,11 @@ function Overview({ data, datasets, onNewTransfer, onImportDataset, importNotice
         <section className="action-ledger">
           <div className="panel-top"><p className="eyebrow">OPEN OBLIGATIONS</p><span>{String(openObligations.length).padStart(2, "0")} OPEN</span></div>
           {openObligations.slice(0, 5).map((obligation, index) => (
-            <div className="action-row" key={obligation.id}>
+            <button type="button" className="action-row" key={obligation.id} aria-label={`Review risk for obligation ${obligation.externalId}`} onClick={() => latestDataset && onReviewObligation(latestDataset.dataset.id, obligation.id)}>
               <b>{String(index + 1).padStart(2, "0")}</b>
               <span><strong>{obligation.externalId} · {obligation.status.replaceAll("_", " ")}</strong><small>{accountNames.get(obligation.fromAccountId) ?? obligation.fromAccountId} → {accountNames.get(obligation.toAccountId) ?? obligation.toAccountId}</small></span>
-              <time>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(obligation.dueAt))}</time><Icon name="arrow" size={14} />
-            </div>
+              <time>{new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(obligation.dueAt))}</time><span className="action-review-cue">REVIEW RISK <Icon name="arrow" size={12} /></span>
+            </button>
           ))}
           {openObligations.length === 0 && <p role="status">{snapshot ? "No open obligations in this snapshot." : "Import a financial dataset to see settlement obligations here."}</p>}
         </section>
@@ -463,9 +471,9 @@ function Overview({ data, datasets, onNewTransfer, onImportDataset, importNotice
           <div className="asset-mini-grid"><div><span>ACCOUNTS</span><strong>{snapshot ? accounts.length : "—"}</strong><small>in latest dataset</small></div><div><span>OBLIGATIONS</span><strong>{snapshot ? obligations.length : "—"}</strong><small>in latest snapshot</small></div><div><span>SECURITY BALANCES</span><strong>{snapshot ? snapshot.securitiesBalances.length : "—"}</strong><small>position entries</small></div><div><span>CASH ENTRIES</span><strong>{snapshot ? snapshot.cashBalances.length : "—"}</strong><small>in latest snapshot</small></div></div>
         </section>
         <section className="operations-stream">
-          <div className="panel-top"><p className="eyebrow">WORKSPACE TRANSFERS</p><span>{data.transactions.length} LOADED</span></div>
-          {transactionRows.map(tx => <div className="stream-row" key={tx.id}><time>{tx.time}</time><i /><span>{tx.type} · {tx.asset}</span><strong>{tx.value}</strong><small>{tx.status}</small></div>)}
-          {transactionRows.length === 0 && <p role="status">New transfer requests will appear here after they are submitted.</p>}
+          <div className="panel-top"><p className="eyebrow">WORKSPACE TRANSFER REQUESTS</p><span>{reviews ? `${requestIds.size} REQUESTS` : "LOADING"}</span></div>
+          {transactionRows.map(tx => <div className="stream-row" key={tx.id}><time>{tx.time}</time><i /><span>{tx.type} · {tx.asset}<small>Transfer request · {tx.status}</small></span><strong>{tx.value}</strong></div>)}
+          {transactionRows.length === 0 && <p role="status">{reviews ? "No transfer requests in this workspace yet." : "Loading workspace transfer requests…"}</p>}
         </section>
       </div>
     </main>
@@ -540,10 +548,18 @@ function Portfolios({ datasets, userId, onOpenTwin }: { datasets: PortfolioDatas
   );
 }
 
-function Transactions({ data, datasets, onNewTransfer, notice }: { data: ExampleData; datasets: PortfolioDataset[]; onNewTransfer: () => void; notice: string }) {
-  const transactionValue = sumTransactionValues(data.transactions);
+function Transactions({ data, datasets, reviews, onReviewObligation, onNewTransfer, notice }: { data: ExampleData; datasets: PortfolioDataset[]; reviews: TransferReviews | null; onReviewObligation: (datasetId: string, obligationId: string) => void; onNewTransfer: () => void; notice: string }) {
   const [filter, setFilter] = useState("All activity");
-  const displayed = useMemo(() => filter === "All activity" ? data.transactions : data.transactions.filter(t => t.status === filter), [filter, data.transactions]);
+  const [sourceFilter, setSourceFilter] = useState("all");
+  const requestIds = useMemo(() => new Set(reviews?.transfers.map(transfer => transfer.id) ?? []), [reviews]);
+  const displayed = useMemo(() => data.transactions.filter(transaction => {
+    const matchesStatus = filter === "All activity" || transaction.status === filter;
+    const isRequest = requestIds.has(transaction.id);
+    const matchesSource = sourceFilter === "all" || (sourceFilter === "requests" ? isRequest : sourceFilter === "samples" ? !isRequest : false);
+    return matchesStatus && matchesSource;
+  }), [filter, sourceFilter, requestIds, data.transactions]);
+  const transactionValue = sumTransactionValues(displayed);
+  const hasPricedTransactions = displayed.some(transaction => transaction.value !== "—");
   const latestDataset = [...datasets].sort((left, right) => Date.parse(right.snapshot.asOf) - Date.parse(left.snapshot.asOf))[0];
   const obligations = latestDataset?.snapshot.obligations ?? [];
   const accounts = new Map((latestDataset?.accounts ?? []).map(account => [account.id, account.name]));
@@ -555,32 +571,38 @@ function Transactions({ data, datasets, onNewTransfer, notice }: { data: Example
       {notice && <p className="transfer-notice" role="status">{notice}</p>}
       <div className="transaction-toolbar">
         <div>{["All activity", "Pending approval", "Screening", "Completed"].map(x => <button key={x} className={filter === x ? "active" : ""} onClick={() => setFilter(x)}>{x}</button>)}</div>
-        <button className="filter-control">All loaded transactions ⌄</button>
+        <label className="filter-control-label"><span className="sr-only">Filter by transaction source</span><select className="filter-control" aria-label="Filter transactions by source" value={sourceFilter} onChange={event => setSourceFilter(event.target.value)} disabled={!reviews}><option value="all">All sources</option><option value="requests">Transfer requests</option><option value="samples">Synthetic samples</option></select></label>
       </div>
       <section className="transaction-ledger">
         <div className="tx-head"><span>TIME / ID</span><span>TYPE</span><span>ASSET / AMOUNT</span><span>ROUTE</span><span>VALUE</span><span>STATUS</span></div>
-        {displayed.map(tx => <button className="tx-row" key={tx.id}>
-          <span><time>{tx.time}</time><small>{tx.id}</small></span><span>{tx.type}</span><span><b>{tx.asset}</b> {formatLedgerAmount(tx.amount, tx.asset)}</span><span>{tx.route}</span><strong>{tx.value}</strong><span className={`tx-status ${tx.status.toLowerCase().replace(" ", "-")}`}>{tx.status}</span>
-        </button>)}
+        {displayed.map(tx => {
+          const source = transactionSource(tx.id, reviews);
+          const sourceLabel = source === "transfer-request" ? "Transfer request" : source === "synthetic-sample" ? "Synthetic sample" : "Classifying source…";
+          return <button className="tx-row" key={tx.id}>
+            <span><time>{tx.time}</time><small>{tx.id}</small><small className="tx-source">{sourceLabel}</small></span><span>{tx.type}</span><span><b>{tx.asset}</b> {formatLedgerAmount(tx.amount, tx.asset)}</span><span>{tx.route}</span><strong>{tx.value}</strong><span className={`tx-status ${tx.status.toLowerCase().replace(" ", "-")}`}>{tx.status}</span>
+          </button>;
+        })}
+        {displayed.length === 0 && <p className="transaction-empty" role="status">{reviews ? "No transactions match these filters." : "Loading transaction source details…"}</p>}
       </section>
       <section className="transaction-volume">
         <div className="volume-heading">
-          <div><p className="eyebrow">LOADED TRANSACTION VALUE</p><strong>{compactUsdFormatter.format(transactionValue)}</strong><span>{data.transactions.length} loaded transactions</span></div>
+          <div><p className="eyebrow">VISIBLE ACTIVITY VALUE</p><strong>{hasPricedTransactions ? compactUsdFormatter.format(transactionValue) : "—"}</strong><span>{displayed.length} visible transactions</span></div>
           <div><span>IMPORTED OBLIGATIONS</span><strong>{obligations.length}</strong><small>{attentionObligations.length} at risk or blocked</small></div>
         </div>
         <p className="portfolio-category__note">{latestDataset ? `${latestDataset.dataset.name} · Snapshot ${new Date(latestDataset.snapshot.asOf).toLocaleString()}` : "Import a dataset to load settlement obligations. Finality telemetry is not available in the current data source."}</p>
-        <div className="portfolio-category__head"><span>OBLIGATION</span><span>STATUS / ROUTE</span><span>DUE</span></div>
+        <div className="portfolio-category__note">Select an open obligation to inspect its evidence and test a proposed intervention.</div>
+        <div className="portfolio-category__head"><span>OBLIGATION</span><span>STATUS / ROUTE</span><span>DUE / REVIEW</span></div>
         {openObligations.slice(0, 12).map(item => {
           const currency = item.asset.kind === "cash" ? item.asset.currency : null;
           const instrumentId = item.asset.kind === "security" ? item.asset.instrumentId : null;
           const assetLabel = currency
             ? `Cash · ${currency}`
             : `Security · ${latestDataset?.instruments.find(instrument => instrument.id === instrumentId)?.symbol ?? instrumentId}`;
-          return <div className="portfolio-category__row" key={item.id}>
-            <div><strong>{item.externalId}</strong><small>{assetLabel}</small></div>
+          return <button type="button" className="portfolio-category__row obligation-review-row" key={item.id} aria-label={`Review risk for obligation ${item.externalId}`} onClick={() => latestDataset && onReviewObligation(latestDataset.dataset.id, item.id)}>
+            <div><strong>{item.externalId}</strong><small>{assetLabel}</small><small className="obligation-review-cue">Review risk and dependencies →</small></div>
             <div><span>{item.status.replaceAll("_", " ")}</span><small>{accounts.get(item.fromAccountId) ?? item.fromAccountId} → {accounts.get(item.toAccountId) ?? item.toAccountId}</small></div>
             <span>{new Date(item.dueAt).toLocaleString()}</span>
-          </div>;
+          </button>;
         })}
         {obligations.length === 0 && <p role="status">{latestDataset ? "No obligations are present in this imported snapshot." : "Imported settlement obligations will appear here when a dataset is loaded."}</p>}
       </section>
@@ -956,6 +978,7 @@ export default function App() {
   const [transferNotice, setTransferNotice] = useState("");
   const [datasetImportOpen, setDatasetImportOpen] = useState(false);
   const [datasetImportNotice, setDatasetImportNotice] = useState("");
+  const [riskReviewTarget, setRiskReviewTarget] = useState<{ datasetId: string; obligationId: string } | null>(null);
   useEffect(() => {
     const userId = window.sessionStorage.getItem("userid")?.trim() ?? "";
     if (!userId) {
@@ -987,6 +1010,10 @@ export default function App() {
       return { ...current, policies: found ? policies : [...policies, policy] };
     });
   }, []);
+  const riskReviewDataset = riskReviewTarget
+    ? portfolioDatasets.find(dataset => dataset.dataset.id === riskReviewTarget.datasetId)
+    : undefined;
+  const riskReviewObligation = riskReviewDataset?.snapshot.obligations.find(item => item.id === riskReviewTarget?.obligationId);
 
   const refresh = useCallback(async (withReviews: boolean, force = false) => {
     if (!USER_ID) {
@@ -1047,12 +1074,12 @@ export default function App() {
   const onDatasetImported = useCallback((result: Extract<ImportDatasetResponse, { ok: true }>['data']) => {
     setDatasetImportOpen(false);
     setDatasetImportNotice(`${result.dataset.name} imported · ${result.imported.accounts} accounts · ${result.imported.obligations} obligations. Dashboard data refreshed.`);
-    void refresh(page === "Digital Twin", true);
+    void refresh(page === "Digital Twin" || page === "Overview" || page === "Transactions", true);
   }, [page, refresh]);
 
   useEffect(() => {
     if (!USER_ID) return;
-    void refresh(page === "Digital Twin", true);
+    void refresh(page === "Digital Twin" || page === "Overview" || page === "Transactions", true);
     return () => refreshController.current?.abort();
   }, [USER_ID, page, refresh]);
 
@@ -1065,7 +1092,7 @@ export default function App() {
   useEffect(() => {
     if (!USER_ID) return;
     const refreshVisibleWorkspace = () => {
-      if (document.visibilityState === "visible") void refresh(page === "Digital Twin", true);
+      if (document.visibilityState === "visible") void refresh(page === "Digital Twin" || page === "Overview" || page === "Transactions", true);
     };
     window.addEventListener("focus", refreshVisibleWorkspace);
     document.addEventListener("visibilitychange", refreshVisibleWorkspace);
@@ -1093,10 +1120,10 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [commandOpen]);
   const pages: Record<Page, React.ReactNode> = {
-    "Overview": <Overview data={financialData} datasets={portfolioDatasets} onNewTransfer={openTransfer} onImportDataset={() => { setDatasetImportNotice(""); setDatasetImportOpen(true); }} importNotice={datasetImportNotice} />,
+    "Overview": <Overview data={financialData} datasets={portfolioDatasets} reviews={reviews} onReviewObligation={(datasetId, obligationId) => setRiskReviewTarget({ datasetId, obligationId })} onNewTransfer={openTransfer} onImportDataset={() => { setDatasetImportNotice(""); setDatasetImportOpen(true); }} importNotice={datasetImportNotice} />,
     "Digital Twin": <DigitalTwin data={financialData} reviews={reviews} refreshError={twinRefreshError} />,
     "Portfolios": <Portfolios datasets={portfolioDatasets} userId={USER_ID} onOpenTwin={() => setPage("Digital Twin")} />,
-    "Transactions": <Transactions data={financialData} datasets={portfolioDatasets} onNewTransfer={openTransfer} notice={transferNotice} />,
+    "Transactions": <Transactions data={financialData} datasets={portfolioDatasets} reviews={reviews} onReviewObligation={(datasetId, obligationId) => setRiskReviewTarget({ datasetId, obligationId })} onNewTransfer={openTransfer} notice={transferNotice} />,
     "Policy Engine": <PolicyEngine data={financialData} userId={USER_ID} onDecision={onPolicyDecision} onPolicySaved={onPolicySaved} />,
     "Reporting": <Reporting data={financialData} datasets={portfolioDatasets} />,
   };
@@ -1108,6 +1135,7 @@ export default function App() {
       <Header page={page} setPage={setPage} openCommand={() => setCommandOpen(true)} datasets={portfolioDatasets} />
       {financialDataError && <p className="transfer-load-error" role="alert">{financialDataError}</p>}
       {pages[page]}
+      {riskReviewDataset && riskReviewObligation && <ObligationRiskReview key={`${riskReviewDataset.dataset.id}:${riskReviewObligation.id}`} dataset={riskReviewDataset} obligation={riskReviewObligation} onClose={() => setRiskReviewTarget(null)} />}
       <footer className="statusbar"><span>DATASETS <b>{portfolioDatasets.length}</b></span><span>SNAPSHOT <b>{portfolioDatasets.length ? new Date([...portfolioDatasets].sort((left, right) => Date.parse(right.snapshot.asOf) - Date.parse(left.snapshot.asOf))[0].snapshot.asOf).toLocaleString() : "NOT LOADED"}</b></span><span>POLICY RULES <b>{financialData.policies.length}</b></span></footer>
       {commandOpen && <CommandPalette close={() => setCommandOpen(false)} setPage={setPage} />}
       {datasetImportOpen && <DatasetImportDialog latestSnapshotAsOf={portfolioDatasets.reduce<string | null>((latest, dataset) => !latest || Date.parse(dataset.snapshot.asOf) > Date.parse(latest) ? dataset.snapshot.asOf : latest, null)} onClose={() => setDatasetImportOpen(false)} onImported={onDatasetImported} />}
