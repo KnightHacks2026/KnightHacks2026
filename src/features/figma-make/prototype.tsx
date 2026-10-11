@@ -563,18 +563,39 @@ function PolicyEngine({ data, onDecision }: { data: ExampleData; onDecision: (id
 }
 
 function Reporting() {
+  const [visibleMonth, setVisibleMonth] = useState(() => new Date(Date.UTC(2026, 9, 1)));
+  const year = visibleMonth.getUTCFullYear();
+  const month = visibleMonth.getUTCMonth();
+  const firstDayOffset = (visibleMonth.getUTCDay() + 6) % 7;
+  const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  const previousMonthDays = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const calendarCellCount = Math.ceil((firstDayOffset + daysInMonth) / 7) * 7;
+  const monthLabel = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(visibleMonth);
+  const sampleEvents: Record<string, string> = {
+    "2026-10-03": "Reserve attestation",
+    "2026-10-10": "SOC evidence pack",
+    "2026-10-17": "NYDFS filing",
+    "2026-10-28": "Client statements",
+    "2026-11-01": "Proof of reserves",
+  };
+  const changeMonth = (increment: number) => setVisibleMonth(current =>
+    new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + increment, 1)));
+
   return (
     <main className="page reporting-page">
       <PageHeading eyebrow="REPORTING / SAMPLE SCHEDULE" title="Evidence & Reporting" description="Sample reporting dates and evidence queue. Connect an imported workspace to show its actual obligations and evidence status." actions={<button className="button primary">Generate report</button>} />
       <div className="report-layout">
         <section className="report-calendar">
-          <div className="report-month"><button>←</button><h2>October 2026 · Sample</h2><button>→</button></div>
+          <div className="report-month"><button type="button" aria-label="Previous month" onClick={() => changeMonth(-1)}>←</button><h2>{monthLabel} · Sample</h2><button type="button" aria-label="Next month" onClick={() => changeMonth(1)}>→</button></div>
           <div className="weekdays">{["MON","TUE","WED","THU","FRI","SAT","SUN"].map(d => <span key={d}>{d}</span>)}</div>
-          <div className="days">{Array.from({ length: 35 }, (_, i) => {
-            const firstDayOffset = (new Date(Date.UTC(2026, 9, 1)).getUTCDay() + 6) % 7;
+          <div className="days">{Array.from({ length: calendarCellCount }, (_, i) => {
             const day = i - firstDayOffset + 1;
-            const displayDay = day < 1 ? 30 + day : day > 31 ? day - 31 : day;
-            return <div className={`${day === 10 ? "today" : ""} ${day < 1 || day > 31 ? "muted" : ""}`} key={i}><span>{displayDay}</span>{day === 3 && <b>Reserve attestation</b>}{day === 10 && <b>SOC evidence pack</b>}{day === 17 && <b>NYDFS filing</b>}{day === 28 && <b>Client statements</b>}</div>;
+            const outsideMonth = day < 1 || day > daysInMonth;
+            const displayDay = day < 1 ? previousMonthDays + day : day > daysInMonth ? day - daysInMonth : day;
+            const cellDate = new Date(Date.UTC(year, month, day));
+            const dateKey = cellDate.toISOString().slice(0, 10);
+            const event = sampleEvents[dateKey];
+            return <div className={`${dateKey === "2026-10-10" ? "today" : ""} ${outsideMonth ? "muted" : ""}`} key={dateKey}><span>{displayDay}</span>{event && <b>{event}</b>}</div>;
           })}</div>
         </section>
         <aside className="report-queue">
