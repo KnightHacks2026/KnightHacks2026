@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { cascadeImport, cascadeSnapshot } from "../../src/contracts/fixtures";
 import { assessCustody, CustodyValidationError, type CustodyInput } from "../../src/lib/custody";
 import { GET } from "../../src/app/api/datasets/[datasetId]/custody/route";
+import { authenticatedRequest } from "../authenticated-request";
 
 const input = (): CustodyInput => ({ snapshot: structuredClone(cascadeSnapshot), accounts: structuredClone(cascadeImport.accounts), instruments: structuredClone(cascadeImport.instruments), sourceRecords: structuredClone(cascadeImport.sourceRecords), dependencies: structuredClone(cascadeImport.dependencies) });
 const sum = (values: { settledMinorUnits: string }[]) => values.reduce((total, b) => total + BigInt(b.settledMinorUnits), 0n);
@@ -127,16 +128,16 @@ describe("custody assessment", () => {
 describe("custody API", () => {
   const context = { params: Promise.resolve({ datasetId: "dataset-cascade" }) };
   it("returns assessed fixture data in the shared envelope", async () => {
-    const response = await GET(new Request("http://localhost/api/datasets/dataset-cascade/custody"), context);
+    const response = await GET(await authenticatedRequest("http://localhost/api/datasets/dataset-cascade/custody"), context);
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.data.assessment.indicators.exceptionCount).toBe(3);
     expect(body.meta.datasetRevision).toBe("1");
   });
   it("returns explicit version and dataset errors", async () => {
-    const version = await GET(new Request("http://localhost/api/datasets/dataset-cascade/custody?contractVersion=2.0.0"), context);
+    const version = await GET(await authenticatedRequest("http://localhost/api/datasets/dataset-cascade/custody?contractVersion=2.0.0"), context);
     expect((await version.json()).error.code).toBe("UNSUPPORTED_CONTRACT_VERSION");
-    const absent = await GET(new Request("http://localhost/api/datasets/unknown/custody"), { params: Promise.resolve({ datasetId: "unknown" }) });
+    const absent = await GET(await authenticatedRequest("http://localhost/api/datasets/unknown/custody"), { params: Promise.resolve({ datasetId: "unknown" }) });
     expect(absent.status).toBe(404);
     expect((await absent.json()).error.code).toBe("NOT_FOUND");
   });

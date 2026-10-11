@@ -253,11 +253,55 @@ function writeExampleData(database: DatabaseSync, userId: string, data: ExampleD
 }
 
 function seedExampleData(database: DatabaseSync, userId: string) {
-  const existing = database.prepare("SELECT user_id FROM example_data_initialized WHERE user_id = ?").get(userId);
-  if (existing) return;
   database.exec("BEGIN IMMEDIATE");
   try {
-    writeExampleData(database, userId, exampleData);
+    const nextPosition = (table: string) => Number((database.prepare(
+      `SELECT COALESCE(MAX(position), -1) + 1 AS position FROM ${table} WHERE user_id = ?`,
+    ).get(userId) as { position: number }).position);
+
+    // Backfill fixture records by stable IDs. Append missing rows after existing
+    // positions so user-created rows are preserved and unique-position constraints hold.
+    const assetExists = database.prepare("SELECT 1 FROM example_assets WHERE user_id = ? AND symbol = ?");
+    const insertAsset = database.prepare("INSERT INTO example_assets VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    let position = nextPosition("example_assets");
+    for (const row of exampleData.assets) {
+      if (assetExists.get(userId, row.symbol)) continue;
+      insertAsset.run(userId, position++, row.symbol, row.name, row.balance, row.value, row.change, row.share);
+    }
+
+    const transactionExists = database.prepare("SELECT 1 FROM example_transactions WHERE user_id = ? AND id = ?");
+    const insertTransaction = database.prepare("INSERT INTO example_transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    position = nextPosition("example_transactions");
+    for (const row of exampleData.transactions) {
+      if (transactionExists.get(userId, row.id)) continue;
+      insertTransaction.run(userId, position++, row.id, row.time, row.type, row.asset, row.amount, row.value, row.route, row.status);
+    }
+
+    const policyExists = database.prepare("SELECT 1 FROM example_policies WHERE user_id = ? AND name = ?");
+    const insertPolicy = database.prepare("INSERT INTO example_policies (user_id, position, name, scope, rule, state, coverage) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    position = nextPosition("example_policies");
+    for (const row of exampleData.policies) {
+      if (policyExists.get(userId, row.name)) continue;
+      insertPolicy.run(userId, position++, row.name, row.scope, row.rule, row.state, row.coverage);
+    }
+
+    const nodeExists = database.prepare("SELECT 1 FROM example_twin_nodes WHERE user_id = ? AND id = ?");
+    const insertNode = database.prepare("INSERT INTO example_twin_nodes VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    position = nextPosition("example_twin_nodes");
+    for (const row of exampleData.nodes) {
+      if (nodeExists.get(userId, row.id)) continue;
+      insertNode.run(userId, position++, row.id, row.x, row.y, row.r, row.sub, row.type);
+    }
+
+    const edgeExists = database.prepare("SELECT 1 FROM example_twin_edges WHERE user_id = ? AND source = ? AND target = ?");
+    const insertEdge = database.prepare("INSERT INTO example_twin_edges VALUES (?, ?, ?, ?)");
+    position = nextPosition("example_twin_edges");
+    for (const [source, target] of exampleData.edges) {
+      if (edgeExists.get(userId, source, target)) continue;
+      insertEdge.run(userId, position++, source, target);
+    }
+
+    database.prepare("INSERT INTO example_data_initialized (user_id) VALUES (?) ON CONFLICT(user_id) DO NOTHING").run(userId);
     database.exec("COMMIT");
   } catch (error) {
     database.exec("ROLLBACK");
@@ -267,7 +311,7 @@ function seedExampleData(database: DatabaseSync, userId: string) {
 
 export async function getExampleData(userId = demoUserId()): Promise<ExampleData> {
   const database = await getDatabase();
-  if (userId === demoUserId()) seedExampleData(database, userId);
+  seedExampleData(database, userId);
   const assets = database.prepare("SELECT symbol, name, balance, value, change, share FROM example_assets WHERE user_id = ? ORDER BY position").all(userId)
     .map(row => ({ symbol: String(row.symbol), name: String(row.name), balance: String(row.balance), value: String(row.value), change: String(row.change), share: Number(row.share) }));
   const transactions = database.prepare("SELECT id, time, type, asset, amount, value, route, status FROM example_transactions WHERE user_id = ? ORDER BY position").all(userId)

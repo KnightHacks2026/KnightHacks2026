@@ -4,20 +4,29 @@ import { cascadeBaselineProjection, fullFundingScenario, partialFundingScenario 
 import { GET as workspace } from "../../src/app/api/datasets/[datasetId]/workspace/route";
 import { GET as twin } from "../../src/app/api/datasets/[datasetId]/twin/route";
 import { POST as simulate } from "../../src/app/api/datasets/[datasetId]/simulations/route";
+import { authenticatedRequest } from "../authenticated-request";
 
 const context = { params: Promise.resolve({ datasetId: "dataset-cascade" }) };
-const post = (body: unknown) => simulate(new Request("http://localhost/api/datasets/dataset-cascade/simulations", {
+const post = async (body: unknown) => simulate(await authenticatedRequest("http://localhost/api/datasets/dataset-cascade/simulations", {
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
 }), context);
 
 describe("fixture-backed simulation API", () => {
+  it("requires sign-in before exposing the shared demonstration fixture", async () => {
+    const response = await simulate(new Request("http://localhost/api/datasets/dataset-cascade/simulations", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(fullFundingScenario),
+    }), context);
+    expect(response.status).toBe(401);
+    expect((await response.json()).error.code).toBe("PERMISSION_DENIED");
+  });
+
   it("serves workspace details and an engine-derived baseline", async () => {
-    const workspaceResponse = await workspace(new Request("http://localhost/api/datasets/dataset-cascade/workspace"), context);
+    const workspaceResponse = await workspace(await authenticatedRequest("http://localhost/api/datasets/dataset-cascade/workspace"), context);
     const workspaceBody = await workspaceResponse.json();
     expect(workspaceBody.ok).toBe(true);
     expect(workspaceBody.data.dataset.revision).toBe("1");
     expect(workspaceBody.data.accounts).toHaveLength(5);
-    const twinResponse = await twin(new Request("http://localhost/api/datasets/dataset-cascade/twin?snapshotId=snapshot-cascade-1"), context);
+    const twinResponse = await twin(await authenticatedRequest("http://localhost/api/datasets/dataset-cascade/twin?snapshotId=snapshot-cascade-1"), context);
     const twinBody = await twinResponse.json();
     expect(twinBody.data.projection).toEqual(cascadeBaselineProjection);
     expect(twinBody.meta).toMatchObject({ contractVersion: "1.0.0", datasetRevision: "1" });
@@ -37,7 +46,7 @@ describe("fixture-backed simulation API", () => {
     expect(full.data.result.comparison.newlySettledObligationIds).toHaveLength(3);
     expect(partial.data.result.comparison.stillBlockedObligationIds).toHaveLength(3);
     expect(full.data.result.projected.cashBalances.reduce((sum: bigint, b: { settledMinorUnits: string }) => sum + BigInt(b.settledMinorUnits), 0n)).toBe(11000000000n);
-    const after = await (await workspace(new Request("http://localhost/api/datasets/dataset-cascade/workspace"), context)).json();
+    const after = await (await workspace(await authenticatedRequest("http://localhost/api/datasets/dataset-cascade/workspace"), context)).json();
     expect(after.data.snapshot.cashBalances.find((b: { accountId: string }) => b.accountId === "acct-reserve").settledMinorUnits).toBe("2000000000");
     expect(after.data.recentAuditEvents).toEqual([]);
   });
@@ -80,9 +89,9 @@ describe("fixture-backed simulation API", () => {
       const payload = await response.json();
       expect(payload).toMatchObject({ ok: false, error: { code }, meta: { contractVersion: "1.0.0" } });
     }
-    const missing = await simulate(new Request("http://localhost/api/datasets/dataset-cascade/simulations", { method: "POST", body: "{" }), context);
+    const missing = await simulate(await authenticatedRequest("http://localhost/api/datasets/dataset-cascade/simulations", { method: "POST", body: "{" }), context);
     expect((await missing.json()).error.code).toBe("INVALID_REQUEST");
-    const unknown = await simulate(new Request("http://localhost/api/datasets/unknown/simulations", { method: "POST", body: JSON.stringify({ ...fullFundingScenario, datasetId: "unknown" }) }), { params: Promise.resolve({ datasetId: "unknown" }) });
+    const unknown = await simulate(await authenticatedRequest("http://localhost/api/datasets/unknown/simulations", { method: "POST", body: JSON.stringify({ ...fullFundingScenario, datasetId: "unknown" }) }), { params: Promise.resolve({ datasetId: "unknown" }) });
     expect(unknown.status).toBe(404);
   });
 
@@ -93,11 +102,11 @@ describe("fixture-backed simulation API", () => {
       [workspace, "workspace?contractVersion=2.0.0", 400, "UNSUPPORTED_CONTRACT_VERSION"],
     ] as const;
     for (const [handler, path, status, code] of queryCases) {
-      const response = await handler(new Request(`http://localhost/api/datasets/dataset-cascade/${path}`), context);
+      const response = await handler(await authenticatedRequest(`http://localhost/api/datasets/dataset-cascade/${path}`), context);
       expect(response.status).toBe(status);
       expect(await response.json()).toMatchObject({ ok: false, error: { code }, meta: { contractVersion: "1.0.0" } });
     }
-    const after = await (await twin(new Request("http://localhost/api/datasets/dataset-cascade/twin"), context)).json();
+    const after = await (await twin(await authenticatedRequest("http://localhost/api/datasets/dataset-cascade/twin"), context)).json();
     expect(after.data.projection).toEqual(cascadeBaselineProjection);
   });
 });

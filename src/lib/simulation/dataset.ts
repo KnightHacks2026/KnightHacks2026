@@ -3,13 +3,10 @@ import type { Dataset, FinancialSnapshot } from "@/contracts";
 import type { SimulationInput } from "./index";
 import { getDemoUserId, getImportedDataset } from "@/lib/data/repository";
 
-/** Resolve a dataset only within the authenticated account's namespace. */
-// Keep the demo default for existing internal fixture consumers. API routes must pass
-// the authenticated account explicitly; all route handlers do so.
+/** Resolve imported datasets within the authenticated account; the built-in
+ * deterministic cascade is a read-only fixture shared by signed-in accounts. */
 export async function getSimulationDataset(datasetId: string, userId = getDemoUserId()) {
   if (datasetId !== cascadeImport.dataset.id) return getImportedDataset(datasetId, userId);
-  // The built-in cascade is a demo account fixture, not a shared workspace.
-  if (userId !== getDemoUserId()) return null;
   const dataset: Dataset = {
     ...cascadeImport.dataset,
     revision: cascadeSnapshot.datasetRevision,
