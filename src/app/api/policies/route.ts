@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api/envelope";
-import { createExamplePolicy, getExampleData, hasAuthenticationUser, PolicyArchiveConflictError, PolicyNameConflictError } from "@/lib/data/repository";
+import { createAmountThresholdPolicy, getAuthenticatedUser, getExampleData, PolicyArchiveConflictError, PolicyNameConflictError } from "@/lib/data/repository";
 
 const positiveDecimal = z.string()
   .trim()
@@ -32,9 +32,11 @@ export async function POST(request: Request) {
   const parsed = policySchema.safeParse(input);
   if (!parsed.success) return apiError("INVALID_REQUEST", parsed.error.issues[0]?.message ?? "Complete every policy field.", 400);
   const { userId, name, asset, threshold, archivePolicyNames } = parsed.data;
-  if (!(await hasAuthenticationUser(userId))) {
+  const actorId = await getAuthenticatedUser(request);
+  if (!actorId) {
     return apiError("PERMISSION_DENIED", "The user is not authenticated.", 401);
   }
+  if (actorId !== userId) return apiError("PERMISSION_DENIED", "You cannot create policies for another user.", 403);
 
   const assets = (await getExampleData(userId)).assets;
   if (!assets.some(row => row.symbol === asset && row.symbol !== "OTHER")) {
@@ -42,7 +44,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const policy = await createExamplePolicy({ userId, name, asset, threshold, archivePolicyNames });
+    const policy = await createAmountThresholdPolicy({ userId, name, asset, threshold, archivePolicyNames });
     return apiSuccess({ policy, archivedPolicyNames: [...new Set(archivePolicyNames)] }, 201);
   } catch (error) {
     if (error instanceof PolicyNameConflictError) {

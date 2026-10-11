@@ -17,7 +17,7 @@ describe("grounded settlement intelligence", () => {
     const assessment = custodyEvidence(source);
     const baseline = baselineEvidence(source);
     const first = explain(source, { kind: "obligation", id: "obligation-1" }, assessment, baseline)!;
-    expect(first.summary).toContain("available settled inventory at acct-a: 9000 USD minor units");
+    expect(first.summary).toContain("available settled inventory at acct-a: 9000000000 USD minor units");
     expect(first.reasonCodes).toContain("CASH_SHORTFALL");
     expect(first.sourceRecordIds).toEqual(["source-1"]);
     const downstream = explain(source, { kind: "obligation", id: "obligation-3" }, assessment, baseline)!;
@@ -47,7 +47,7 @@ describe("grounded settlement intelligence", () => {
     const before = structuredClone(source.snapshot);
     const suggestions = recommend(source, baselineEvidence(source));
     expect(suggestions).toHaveLength(1);
-    expect(suggestions[0].intervention).toMatchObject({ kind: "cash_transfer", sourceAccountId: "acct-reserve", targetAccountId: "acct-a", amount: { currency: "USD", minorUnits: "1000" } });
+    expect(suggestions[0].intervention).toMatchObject({ kind: "cash_transfer", sourceAccountId: "acct-reserve", targetAccountId: "acct-a", amount: { currency: "USD", minorUnits: "1000000000" } });
     expect(suggestions[0].comparison.newlySettledObligationIds).toEqual(["obligation-1", "obligation-2", "obligation-3"]);
     expect(suggestions[0].requiresHumanReview).toBe(true);
     const projected = replayEvidence(source, { ...fullFundingScenario, interventions: [suggestions[0].intervention] });
@@ -57,24 +57,24 @@ describe("grounded settlement intelligence", () => {
       expect(cashTotal(projected.projected.cashBalances)).toBe(cashTotal(source.snapshot.cashBalances));
     }
     expect(source.snapshot).toEqual(before);
-    source.snapshot.cashBalances.find(item => item.accountId === "acct-reserve")!.reservedMinorUnits = "2000";
+    source.snapshot.cashBalances.find(item => item.accountId === "acct-reserve")!.reservedMinorUnits = "2000000000";
     expect(recommend(source, baselineEvidence(source))).toEqual([]);
     source.snapshot.cashBalances.find(item => item.accountId === "acct-reserve")!.reservedMinorUnits = "0";
     source.accounts.find(item => item.id === "acct-reserve")!.status = "restricted";
     expect(recommend(source, baselineEvidence(source))).toEqual([]);
     source.accounts.find(item => item.id === "acct-reserve")!.status = "open";
-    source.sourceRecords.find(item => item.id === "source-1")!.amount!.minorUnits = "9000";
+    source.sourceRecords.find(item => item.id === "source-1")!.amount!.minorUnits = "9000000000";
     expect(custodyEvidence(source).obligations.find(item => item.obligationId === "obligation-1")?.reasonCodes).toContain("AMOUNT_MISMATCH");
     expect(recommend(source, baselineEvidence(source))).toEqual([]);
   });
 
   it("suggests priority only when engine settlement and blocked-count evidence improves", async () => {
     const source = (await getSimulationDataset("dataset-cascade"))!;
-    source.snapshot.cashBalances.find(item => item.accountId === "acct-a")!.settledMinorUnits = "10000";
+    source.snapshot.cashBalances.find(item => item.accountId === "acct-a")!.settledMinorUnits = "10000000000";
     source.snapshot.cashBalances.find(item => item.accountId === "acct-reserve")!.settledMinorUnits = "0";
-    const competing = { ...source.snapshot.obligations[0], id: "obligation-0", externalId: "competing", requiredUnits: "9000" as const, sourceRecordIds: ["source-competing"] };
+    const competing = { ...source.snapshot.obligations[0], id: "obligation-0", externalId: "competing", requiredUnits: "9000000000" as const, sourceRecordIds: ["source-competing"] };
     source.snapshot.obligations.push(competing);
-    source.sourceRecords.push({ ...source.sourceRecords[0], id: "source-competing", externalId: "competing", amount: { currency: "USD", minorUnits: "9000" } });
+    source.sourceRecords.push({ ...source.sourceRecords[0], id: "source-competing", externalId: "competing", amount: { currency: "USD", minorUnits: "9000000000" } });
     const baseline = baselineEvidence(source);
     expect(baseline.obligations.find(item => item.obligationId === "obligation-1")?.status).toBe("blocked");
     const suggestions = recommend(source, baseline);
@@ -123,7 +123,7 @@ describe("grounded settlement intelligence", () => {
     const body = { contractVersion: "1.0.0", datasetId: "dataset-cascade", subject: { kind: "simulation", id: "fabricated" }, simulationRequest: fullFundingScenario };
     const forged = await post(body);
     expect(forged.status).toBe(404);
-    const oversized = { ...fullFundingScenario, interventions: [{ ...fullFundingScenario.interventions[0], amount: { currency: "USD", minorUnits: "3000" } }] };
+    const oversized = { ...fullFundingScenario, interventions: [{ ...fullFundingScenario.interventions[0], amount: { currency: "USD", minorUnits: "3000000000" } }] };
     const simulation = await simulationRoute(new Request("http://localhost/api/datasets/dataset-cascade/simulations", { method: "POST", body: JSON.stringify(oversized) }), context);
     const result = (await simulation.json()).data.result;
     expect(result.status).toBe("invalid");

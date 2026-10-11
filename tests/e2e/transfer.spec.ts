@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./authenticated-test";
 
 const tab = (page: import("@playwright/test").Page) => page.locator(".section-tabs").getByRole("button", { name: "Transactions", exact: true });
 
@@ -41,7 +41,7 @@ test("invalid input and API errors keep the transfer form open", async ({ page }
   });
   await page.goto("/");
   await tab(page).click();
-  await page.getByRole("button", { name: "Initiate transfer" }).click();
+  await page.getByRole("button", { name: "New transfer", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "New transfer" });
   await expect(dialog.getByLabel("Source asset")).toBeEnabled();
   await dialog.getByLabel("Amount").fill("0");
