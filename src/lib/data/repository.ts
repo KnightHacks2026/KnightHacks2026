@@ -176,6 +176,16 @@ export async function hasAuthenticationUser(userId: string): Promise<boolean> {
   return database.prepare("SELECT 1 AS present FROM custody_authenticate WHERE user_id = ?").get(userId) !== undefined;
 }
 
+export async function createAuthenticationUser(userId: string, passwordHash: string, otpSecret: string): Promise<boolean> {
+  const database = await getDatabase();
+  const result = database.prepare(`
+    INSERT INTO custody_authenticate (user_id, password, otp_secret)
+    VALUES (?, ?, ?)
+    ON CONFLICT(user_id) DO NOTHING
+  `).run(userId, passwordHash, otpSecret);
+  return result.changes === 1;
+}
+
 export interface DatasetSource {
   dataset: Dataset;
   snapshot: FinancialSnapshot;
