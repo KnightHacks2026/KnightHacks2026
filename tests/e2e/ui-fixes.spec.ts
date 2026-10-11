@@ -72,8 +72,8 @@ test("policy form validates, persists a draft, and retains samples", async ({ pa
   try {
     await page.goto("/");
     await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Policy Engine" }).click();
-    await expect(page.locator(".policy-list > button")).toHaveCount(4);
-    await page.getByRole("button", { name: "Create policy" }).click();
+    await expect(page.locator(".policy-list")).toContainText("Institutional Withdrawal");
+    await page.getByRole("button", { name: "Create draft", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Create policy" });
     await dialog.getByRole("button", { name: "Save draft policy" }).click();
     await expect(dialog.getByRole("alert")).toContainText("at least 3 characters");
@@ -82,12 +82,12 @@ test("policy form validates, persists a draft, and retains samples", async ({ pa
     await dialog.getByRole("textbox", { name: "Rule description" }).fill("Human review required for this proposed control");
     await dialog.getByRole("button", { name: "Save draft policy" }).click();
     await expect(dialog).toBeHidden();
-    await expect(page.locator(".policy-list > button")).toHaveCount(5);
+    await expect(page.locator(".policy-list")).toContainText(name);
     await expect(page.locator(".policy-draft-detail")).toContainText("not evaluated by transfer review");
     await page.reload();
     await page.getByRole("navigation", { name: "Primary navigation" }).getByRole("button", { name: "Policy Engine" }).click();
-    await expect(page.locator(".policy-list > button")).toHaveCount(5);
     await expect(page.locator(".policy-list")).toContainText(name);
+    await expect(page.locator(".policy-list")).toContainText("Institutional Withdrawal");
   } finally {
     const database = new DatabaseSync(databasePath);
     try { database.prepare("DELETE FROM example_policies WHERE user_id = ? AND name = ?").run("demo-user", name); }

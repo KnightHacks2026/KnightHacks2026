@@ -60,7 +60,7 @@ export function PolicyReview({ onDecision }: { onDecision: (id: string, status: 
 
   return <section className="policy-review" aria-label="Local demo transfer review">
     <div className="policy-review-heading"><div><p className="eyebrow">LOCAL DEMO / HUMAN REVIEW</p><h2>Transfer review queue</h2></div><span>Reviewer: local-demo-reviewer · no authentication or role verification</span></div>
-    <p className="policy-review-disclosure">Only transfers created through New Transfer appear here. Approval means approved for further processing; it does not execute or settle a transfer. For an approvable synthetic case, use destination <strong>Demo Treasury</strong> and an amount up to 10 asset units. Institutional signer and compliance checks remain unverified.</p>
+    <p className="policy-review-disclosure">Only transfers created through New Transfer appear here. Approval means approved for further processing; it does not execute or settle a transfer. For an approvable synthetic case, use destination <strong>Demo Treasury</strong>. Institutional signer and compliance checks remain unverified.</p>
     {loading && <p role="status" className="policy-review-message">Loading transfer reviews…</p>}
     {error && <p role="alert" className="policy-review-error">{error}</p>}
     {notice && <p role="status" className="policy-review-success">{notice}</p>}

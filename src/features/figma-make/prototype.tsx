@@ -719,6 +719,26 @@ function PolicyEngine({ data, userId, onDecision, onPolicySaved }: {
     }
   }
 
+  async function updatePolicyState(policy: ExamplePolicy, state: "Enforced" | "Disabled") {
+    if (policyActionWorking) return;
+    setPolicyActionWorking(true);
+    setPolicyActionError("");
+    try {
+      const response = await fetch(`/api/policies/${encodeURIComponent(policy.name)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, state }),
+      });
+      const body = await response.json() as { ok: true; data: { state: string } } | { ok: false; error: { message: string } };
+      if (!response.ok || !body.ok) throw new Error(body.ok ? "Unable to update this policy." : body.error.message);
+      onPolicySaved({ ...policy, state: body.data.state });
+    } catch (cause) {
+      setPolicyActionError(cause instanceof Error ? cause.message : "Unable to update this policy.");
+    } finally {
+      setPolicyActionWorking(false);
+    }
+  }
+
   return (
     <main className="page policy-page">
       <PageHeading eyebrow="CONTROL PLANE / POLICY ENGINE" title="Programmable Governance" description="Authorization logic mapped directly to entities, wallets, transaction types, and risk limits." actions={<div style={{ display: "flex", gap: 8 }}><button type="button" className="button secondary" onClick={() => setCreateOpen(true)}>Create draft</button><button type="button" className="button primary" onClick={() => setThresholdOpen(true)}>Create amount rule</button></div>} />
@@ -734,9 +754,9 @@ function PolicyEngine({ data, userId, onDecision, onPolicySaved }: {
         </section>
         <section className="policy-canvas">
           {selectedPolicy && <>
-            <div className="policy-canvas-head"><div><p className="eyebrow">POLICY / POL-{String(selectedPolicyIndex + 1).padStart(3, "0")}</p><h2>{selectedPolicy.name}</h2></div><div className="policy-state-control"><span className={selectedPolicy.state === "Review" ? "review" : selectedPolicy.state === "Archived" ? "archived" : ""}>● {selectedPolicy.state}</span>{showArchived
-              ? <button className="button secondary" disabled={policyActionWorking} onClick={() => void updatePolicyArchive(selectedPolicy, "restore")}>{policyActionWorking ? "Restoring…" : "Restore"}</button>
-              : <button className="button secondary" disabled={policyActionWorking} onClick={() => setArchiveTarget(selectedPolicy.name)}>Archive</button>}</div></div>
+            <div className="policy-canvas-head"><div><p className="eyebrow">POLICY / POL-{String(selectedPolicyIndex + 1).padStart(3, "0")}</p><h2>{selectedPolicy.name}</h2></div><div className="policy-state-control"><span className={selectedPolicy.state === "Review" ? "review" : selectedPolicy.state === "Archived" ? "archived" : selectedPolicy.state === "Disabled" ? "review" : ""}>● {selectedPolicy.state}</span>{showArchived
+              ? <button type="button" className="button secondary" disabled={policyActionWorking} onClick={() => void updatePolicyArchive(selectedPolicy, "restore")}>{policyActionWorking ? "Restoring…" : "Restore"}</button>
+              : <>{selectedPolicy.asset && selectedPolicy.threshold && <button type="button" className="button secondary" disabled={policyActionWorking} onClick={() => void updatePolicyState(selectedPolicy, selectedPolicy.state === "Disabled" ? "Enforced" : "Disabled")}>{policyActionWorking ? "Saving…" : selectedPolicy.state === "Disabled" ? "Enable" : "Disable"}</button>}<button type="button" className="button secondary" disabled={policyActionWorking} onClick={() => setArchiveTarget(selectedPolicy.name)}>Archive</button></>}</div></div>
             {selectedPolicy.state === "Draft" ? <div className="policy-draft-detail"><p className="eyebrow">PROPOSED CONTROL</p><p><strong>Scope:</strong> {selectedPolicy.scope}</p><p><strong>Rule:</strong> {selectedPolicy.rule}</p><p>This saved draft is not evaluated by transfer review. No enforcement or coverage is claimed.</p></div> : <>
               <div className="logic-flow">
                 <div className="logic-node"><span>WHEN</span><strong>Transaction initiated</strong><small>{selectedPolicy.scope}</small></div><i />

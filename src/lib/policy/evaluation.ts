@@ -41,12 +41,10 @@ function decimalGreaterThan(left: string, right: string): boolean {
   return BigInt(leftWhole + leftFraction.padEnd(scale, "0")) > BigInt(rightWhole + rightFraction.padEnd(scale, "0"));
 }
 
-/** Exact decimal comparison. This is a demo request limit, not an inventory check. */
-function withinDemoLimit(amount: string): boolean {
+/** Amounts must be positive decimals; inventory sufficiency is checked separately. */
+function validPositiveAmount(amount: string): boolean {
   if (!/^\d+(?:\.\d+)?$/.test(amount)) return false;
-  const [whole, fraction = ""] = amount.split(".");
-  const units = BigInt(whole);
-  return (units < 10n || (units === 10n && !/[1-9]/.test(fraction))) && /[1-9]/.test(amount);
+  return /[1-9]/.test(amount);
 }
 
 export function evaluateTransfer(transfer: ReviewTransfer, sourceOwned: boolean, amountPolicies: AmountThresholdPolicy[] = []): PolicyEvaluation {
@@ -54,8 +52,8 @@ export function evaluateTransfer(transfer: ReviewTransfer, sourceOwned: boolean,
   const checks: PolicyCheck[] = [
     { id: "source", label: "Source in demo inventory", result: sourceOwned ? "Passed" : "Failed", mandatory: true,
       detail: sourceOwned ? "The source asset is present in this user's local demo inventory." : "The source asset is absent from this user's local demo inventory." },
-    { id: "amount", label: "Synthetic request limit: 10 asset units", result: withinDemoLimit(transfer.amount) ? "Passed" : "Failed", mandatory: true,
-      detail: "Exact decimal request amount must be greater than zero and no more than 10 units. This is a synthetic demo rule, not an available-balance check." },
+    { id: "amount", label: "Valid positive asset amount", result: validPositiveAmount(transfer.amount) ? "Passed" : "Failed", mandatory: true,
+      detail: "The request amount must be a positive decimal value. Available-balance validation remains a separate control." },
     { id: "route", label: "Synthetic Demo Treasury route", result: demoRoute ? "Passed" : "Requires evidence", mandatory: true,
       detail: demoRoute ? "Destination exactly matches the server-defined synthetic demo route." : "This destination has no verified account or allowlist evidence." },
     { id: "institutional", label: "Institutional signer and compliance evidence", result: "Requires evidence", mandatory: !demoRoute,
@@ -72,8 +70,8 @@ export function evaluateTransfer(transfer: ReviewTransfer, sourceOwned: boolean,
       // review reason; it does not authorize or block a human from deciding.
       mandatory: false,
       detail: matched
-        ? `${transfer.asset} amount ${transfer.amount} exceeds the enforced threshold of ${policy.threshold}. Keep this request in the human review queue.`
-        : `${transfer.asset} amount ${transfer.amount} does not exceed the enforced threshold of ${policy.threshold}.`,
+        ? `Matched enforced rule: ${transfer.asset} amount ${transfer.amount} exceeds ${policy.threshold}. Human approval is required.`
+        : `Amount does not exceed the enforced threshold of ${policy.threshold} ${transfer.asset}.`,
     });
   }
   return { scenario: demoRoute ? "Synthetic demo" : "Institutional evidence required", checks,

@@ -43,7 +43,7 @@ test("authenticated dashboard demo flows from topology through review, simulatio
     await canvas.getByRole("button", { name: "Run Simulation" }).click();
     await expect(canvas).toHaveAttribute("data-phase", "complete");
     await nav("Policy Engine").click();
-    await page.getByRole("button", { name: "Create policy" }).click();
+    await page.getByRole("button", { name: "Create draft", exact: true }).click();
     const policy = page.getByRole("dialog", { name: "Create policy" });
     await policy.getByRole("textbox", { name: "Policy name" }).fill(draftName);
     await policy.getByRole("textbox", { name: "Scope description" }).fill("Demo treasury requests");

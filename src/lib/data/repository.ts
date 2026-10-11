@@ -175,6 +175,9 @@ async function openDatabase(): Promise<DatabaseSync> {
   }
   const policyRuleColumns = connection.prepare("PRAGMA table_info(example_policy_rules)").all()
     .map(column => String(column.name));
+  if (!policyRuleColumns.includes("asset")) {
+    connection.exec("ALTER TABLE example_policy_rules ADD COLUMN asset TEXT NOT NULL DEFAULT 'ANY'");
+  }
   if (!policyRuleColumns.includes("effective_at")) {
     connection.exec("ALTER TABLE example_policy_rules ADD COLUMN effective_at TEXT NOT NULL DEFAULT ''");
   }
@@ -370,6 +373,38 @@ export async function setExamplePolicyArchived(userId: string, name: string, arc
       .run(`policy-audit-${randomUUID()}`, userId, name, new Date().toISOString(), archived ? "archived" : "restored", JSON.stringify({ from: current.state, to: nextState }));
     database.exec("COMMIT");
     return { ok: true as const, state: nextState };
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export async function setExamplePolicyState(userId: string, name: string, state: "Enforced" | "Disabled") {
+  const database = await getDatabase();
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const current = database.prepare(`SELECT state FROM example_policies
+      WHERE user_id = ? AND name = ?`).get(userId, name) as { state: string } | undefined;
+    if (!current) {
+      database.exec("ROLLBACK");
+      return { ok: false as const, reason: "NOT_FOUND" as const };
+    }
+    if (current.state === "Archived") {
+      database.exec("ROLLBACK");
+      return { ok: false as const, reason: "ARCHIVED" as const };
+    }
+    if (current.state === state) {
+      database.exec("ROLLBACK");
+      return { ok: true as const, state };
+    }
+    database.prepare(`UPDATE example_policies SET state = ?
+      WHERE user_id = ? AND name = ? AND state = ?`).run(state, userId, name, current.state);
+    database.prepare(`INSERT INTO example_policy_audit
+      (id, user_id, policy_name, occurred_at, action, details)
+      VALUES (?, ?, ?, ?, 'state_changed', ?)`)
+      .run(`policy-audit-${randomUUID()}`, userId, name, new Date().toISOString(), JSON.stringify({ from: current.state, to: state }));
+    database.exec("COMMIT");
+    return { ok: true as const, state };
   } catch (error) {
     database.exec("ROLLBACK");
     throw error;
