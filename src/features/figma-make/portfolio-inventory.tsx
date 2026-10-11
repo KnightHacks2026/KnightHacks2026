@@ -1,16 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import type { Account, ExampleAsset, FinancialSnapshot, Instrument } from "@/contracts";
+import type { Account, Dataset, Dependency, ExampleAsset, FinancialSnapshot, Instrument } from "@/contracts";
 
 export type InventoryView = "Consolidated" | "Cold Storage" | "Treasury" | "Client Omnibus";
 export const inventoryViews: InventoryView[] = ["Consolidated", "Cold Storage", "Treasury", "Client Omnibus"];
 
 export interface PortfolioDataset {
-  dataset: { id: string; name: string };
+  dataset: Pick<Dataset, "id" | "name" | "revision">;
   accounts: Account[];
   instruments: Instrument[];
   snapshot: FinancialSnapshot;
+  dependencies: Dependency[];
 }
 
 const segmentColors = ["bitcoin", "ethereum", "solana", "stable", "other"];
