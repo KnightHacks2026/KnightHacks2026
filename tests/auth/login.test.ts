@@ -21,6 +21,7 @@ describe("POST /api/users/login", () => {
   beforeAll(async () => {
     await getExampleData();
     database = new DatabaseSync(databasePath);
+    database.exec("PRAGMA busy_timeout = 5000");
     database.prepare(`
       INSERT INTO custody_authenticate (user_id, password, otp_secret)
       VALUES (?, ?, ?)
@@ -28,6 +29,7 @@ describe("POST /api/users/login", () => {
   });
 
   afterAll(() => {
+    database.prepare("DELETE FROM custody_sessions WHERE user_id = ?").run(userId);
     database.prepare("DELETE FROM custody_authenticate WHERE user_id = ?").run(userId);
     database.close();
   });
@@ -39,6 +41,7 @@ describe("POST /api/users/login", () => {
 
     expect(response.status).toBe(200);
     expect((await response.json()).data).toEqual({ userId });
+    expect(response.headers.get("set-cookie")).toContain("custodyos_session=");
   });
 
   it("rejects credentials that do not match the stored password hash", async () => {

@@ -32,9 +32,9 @@ describe("settlement simulation", () => {
       ["obligation-3", "blocked", ["UPSTREAM_SETTLEMENT_BLOCKED"]],
     ]);
     expect(result.comparison).toEqual({ newlySettledObligationIds: ["obligation-1", "obligation-2", "obligation-3"], stillBlockedObligationIds: [], newlyAtRiskObligationIds: [], blockedCountBefore: 3, blockedCountAfter: 0 });
-    expect(["acct-a", "acct-b", "acct-c", "acct-d", "acct-reserve"].map(id => cash(result.projected, id))).toEqual([0n, 0n, 0n, 10000n, 1000n]);
-    expect(totalCash(result.baseline)).toBe(11000n);
-    expect(totalCash(result.projected)).toBe(11000n);
+    expect(["acct-a", "acct-b", "acct-c", "acct-d", "acct-reserve"].map(id => cash(result.projected, id))).toEqual([0n, 0n, 0n, 10000000000n, 1000000000n]);
+    expect(totalCash(result.baseline)).toBe(11000000000n);
+    expect(totalCash(result.projected)).toBe(11000000000n);
     expect(data.snapshot).toEqual(original);
     expect(simulateSettlement(data)).toEqual(result);
   });
@@ -46,13 +46,13 @@ describe("settlement simulation", () => {
     if (result.status !== "valid") return;
     expect(result.comparison.blockedCountAfter).toBe(3);
     expect(result.comparison.stillBlockedObligationIds).toEqual(["obligation-1", "obligation-2", "obligation-3"]);
-    expect(cash(result.projected, "acct-a")).toBe(9500n);
+    expect(cash(result.projected, "acct-a")).toBe(9500000000n);
   });
 
   it("rejects stale revisions, duplicate IDs, and aggregate double allocation without a projected state", () => {
     const data = input([
-      { ...fullFundingScenario.interventions[0], amount: { currency: "USD", minorUnits: "1500" } },
-      { ...fullFundingScenario.interventions[0], id: "second", amount: { currency: "USD", minorUnits: "1000" } },
+      { ...fullFundingScenario.interventions[0], amount: { currency: "USD", minorUnits: "1500000000" } },
+      { ...fullFundingScenario.interventions[0], id: "second", amount: { currency: "USD", minorUnits: "1000000000" } },
     ]);
     data.request.expectedDatasetRevision = "2";
     const result = simulateSettlement(data);
@@ -65,7 +65,7 @@ describe("settlement simulation", () => {
 
   it("respects reserved cash and rejects noncanonical or nonpositive amounts", () => {
     const data = input();
-    data.snapshot.cashBalances.find(b => b.accountId === "acct-reserve")!.reservedMinorUnits = "1500";
+    data.snapshot.cashBalances.find(b => b.accountId === "acct-reserve")!.reservedMinorUnits = "1500000000";
     let result = simulateSettlement(data);
     expect(result.status).toBe("invalid");
     if (result.status === "invalid") expect(result.validationIssues.map(i => i.code)).toContain("INSUFFICIENT_AVAILABLE_CASH");
@@ -94,9 +94,9 @@ describe("settlement simulation", () => {
   });
 
   it("settles DvP legs atomically when both inventories exist", () => {
-    const data = input([{ ...fullFundingScenario.interventions[0], amount: { currency: "USD", minorUnits: "500" } }]);
+    const data = input([{ ...fullFundingScenario.interventions[0], amount: { currency: "USD", minorUnits: "500000000" } }]);
     data.snapshot.obligations = [
-      { ...data.snapshot.obligations[0], id: "cash-leg", fromAccountId: "acct-a", toAccountId: "acct-b", requiredUnits: "10000" },
+      { ...data.snapshot.obligations[0], id: "cash-leg", fromAccountId: "acct-a", toAccountId: "acct-b", requiredUnits: "10000000000" },
       { ...data.snapshot.obligations[0], id: "security-leg", fromAccountId: "acct-b", toAccountId: "acct-a", asset: { kind: "security", instrumentId: "instrument-demo" }, requiredUnits: "20" },
     ];
     data.accounts.find(a => a.id === "acct-b")!.kind = "omnibus";
@@ -155,7 +155,7 @@ describe("settlement simulation", () => {
     expect(result.status).toBe("valid");
     if (result.status !== "valid") return;
     expect(result.projected.obligations[0].settledUnits).toBe("9007199254740993");
-    expect(totalCash(result.projected)).toBe(9007199254742993n);
+    expect(totalCash(result.projected)).toBe(9007201254740993n);
   });
 
   it("rejects a transfer when an earlier settlement consumes its source cash", () => {
@@ -164,10 +164,10 @@ describe("settlement simulation", () => {
       ...fullFundingScenario.interventions[0],
       sourceAccountId: "acct-a",
       targetAccountId: "acct-reserve",
-      amount: { currency: "USD", minorUnits: "1000" },
+      amount: { currency: "USD", minorUnits: "1000000000" },
       effectiveAt: "2026-10-09T14:10:00Z",
     }];
-    data.snapshot.cashBalances.find(b => b.accountId === "acct-a")!.settledMinorUnits = "10000";
+    data.snapshot.cashBalances.find(b => b.accountId === "acct-a")!.settledMinorUnits = "10000000000";
     const original = structuredClone(data.snapshot);
     const result = simulateSettlement(data);
     expect(result.status).toBe("invalid");

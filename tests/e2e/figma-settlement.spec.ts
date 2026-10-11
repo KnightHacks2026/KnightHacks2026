@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./authenticated-test";
+
 
 async function openSimulation(page: import("@playwright/test").Page) {
   await page.goto("/");
@@ -74,7 +75,7 @@ test("full funding reveals each projected leg only after its dependency stage", 
   await canvas.locator(".settlement-node").nth(1).click();
   await expect(inspector).toContainText("LEG-02");
   await expect(inspector).toContainText("LEG-03");
-  await expect(canvas).toContainText("not verified simulation engine outputs");
+  await expect(canvas).toContainText("Synthetic engine projection");
   await canvas.getByRole("button", { name: "Replay Simulation" }).click();
   await expect(canvas).toHaveAttribute("data-phase", "ready");
   await expect(canvas).toContainText("PREVIEW PENDING");
@@ -191,4 +192,51 @@ test("desktop workspace fits and mobile simulation has no horizontal overflow", 
   await expect(canvas).toBeVisible();
   await expect(inspector).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
+});
+
+test("scenario request drives displayed amounts and the selected obligation inspector", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  let requestBody: { datasetId: string; interventions: { amount: { minorUnits: string } }[] } | null = null;
+  await page.route("**/api/datasets/dataset-cascade/simulations", async route => {
+    requestBody = route.request().postDataJSON();
+    const response = await route.fetch();
+    const payload = await response.json();
+    const reserve = payload.data.result.projected.cashBalances.find((balance: { accountId: string }) => balance.accountId === "acct-reserve");
+    const origin = payload.data.result.projected.cashBalances.find((balance: { accountId: string }) => balance.accountId === "acct-a");
+    reserve.settledMinorUnits = "1750000000";
+    origin.settledMinorUnits = "9250000000";
+    await route.fulfill({ response, json: payload });
+  });
+  await openSimulation(page);
+  const canvas = page.getByRole("region", { name: "Settlement simulation workspace" });
+  const inspector = page.getByRole("complementary", { name: "Settlement obligation inspector" });
+  await canvas.getByRole("button", { name: "Fund $5M" }).click();
+  await canvas.getByRole("button", { name: "Run Simulation" }).click();
+  await expect(canvas).toHaveAttribute("data-phase", "complete");
+  expect(requestBody).toMatchObject({ datasetId: "dataset-cascade", interventions: [{ amount: { minorUnits: "500000000" } }] });
+  await expect(canvas.locator(".settlement-overview")).toContainText("$7.5M");
+  await expect(canvas.locator(".settlement-overview")).toContainText("3 blocked");
+  await expect(inspector).toContainText("92%");
+  await canvas.locator(".settlement-node").nth(1).click();
+  await expect(inspector).toContainText("LEG-02");
+  await expect(inspector).toContainText("Dependency blocked");
+});
+
+test("backend failure remains visible and retry obtains a fresh projection", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.route("**/api/datasets/dataset-cascade/simulations", route =>
+    route.fulfill({ status: 503, json: { ok: false, error: { code: "INTERNAL_ERROR", message: "Simulation temporarily unavailable." } } }));
+  await openSimulation(page);
+  const canvas = page.getByRole("region", { name: "Settlement simulation workspace" });
+  await canvas.getByRole("button", { name: "Fund $10M" }).click();
+  await canvas.getByRole("button", { name: "Run Simulation" }).click();
+  await expect(canvas.getByRole("alert")).toContainText("Simulation temporarily unavailable.");
+  await expect(canvas).toHaveAttribute("data-phase", "ready");
+  await expect(canvas.locator(".settlement-overview")).toContainText("PREVIEW PENDING");
+  await expect(canvas.locator(".settlement-node.is-settled")).toHaveCount(0);
+  await page.unroute("**/api/datasets/dataset-cascade/simulations");
+  await canvas.getByRole("button", { name: "Retry Simulation" }).click();
+  await expect(canvas).toHaveAttribute("data-phase", "complete");
+  await expect(canvas.getByRole("alert")).toHaveCount(0);
+  await expect(canvas.locator(".settlement-node.is-settled")).toHaveCount(3);
 });

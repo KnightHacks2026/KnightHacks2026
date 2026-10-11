@@ -14,18 +14,18 @@ describe("custody assessment", () => {
     expect(first.obligations.map(o => [o.status, o.reasonCodes])).toEqual([
       ["blocked", ["CASH_SHORTFALL"]], ["blocked", ["UPSTREAM_SETTLEMENT_BLOCKED"]], ["blocked", ["UPSTREAM_SETTLEMENT_BLOCKED"]],
     ]);
-    expect(first.indicators.blockedCashMinorUnitsByCurrency.USD).toBe("30000");
-    expect(sum(before.snapshot.cashBalances)).toBe(11000n);
-    expect(sum(first.positions.cash)).toBe(11000n);
+    expect(first.indicators.blockedCashMinorUnitsByCurrency.USD).toBe("30000000000");
+    expect(sum(before.snapshot.cashBalances)).toBe(11000000000n);
+    expect(sum(first.positions.cash)).toBe(11000000000n);
     expect(before.snapshot).toEqual(cascadeSnapshot);
   });
 
   it("finds ready and settled obligations without inventing settlement", () => {
-    const data = input(); data.snapshot.cashBalances[0].settledMinorUnits = "10000"; data.snapshot.obligations[0].status = "pending";
+    const data = input(); data.snapshot.cashBalances[0].settledMinorUnits = "10000000000"; data.snapshot.obligations[0].status = "pending";
     const result = assessCustody(data);
     expect(result.obligations[0].status).toBe("pending");
     expect(result.indicators.readyCount).toBe(1);
-    data.snapshot.obligations[0].status = "settled"; data.snapshot.obligations[0].settledUnits = "10000";
+    data.snapshot.obligations[0].status = "settled"; data.snapshot.obligations[0].settledUnits = "10000000000";
     const after = assessCustody(data);
     expect(after.obligations[0].status).toBe("settled");
     expect(after.indicators.settledCount).toBe(1);
@@ -45,7 +45,7 @@ describe("custody assessment", () => {
 
   it("prevents two obligations from claiming the same available inventory", () => {
     const data = input(); data.dependencies = []; data.snapshot.obligations = data.snapshot.obligations.slice(0, 2);
-    data.snapshot.cashBalances[0].settledMinorUnits = "10000";
+    data.snapshot.cashBalances[0].settledMinorUnits = "10000000000";
     data.snapshot.obligations[0].status = "pending";
     data.snapshot.obligations[1].status = "pending";
     data.snapshot.obligations[1].fromAccountId = "acct-a";
@@ -75,7 +75,7 @@ describe("custody assessment", () => {
     data.dvpPairs = [{ cashObligationId: "obligation-1", securityObligationId: "security-1" }];
     const result = assessCustody(data);
     expect(result.obligations.every(o => o.status === "blocked")).toBe(true);
-    data.snapshot.obligations[0].status = "settled"; data.snapshot.obligations[0].settledUnits = "10000";
+    data.snapshot.obligations[0].status = "settled"; data.snapshot.obligations[0].settledUnits = "10000000000";
     expect(() => assessCustody(data)).toThrow(CustodyValidationError);
     data.snapshot.obligations[0].status = "cancelled"; data.snapshot.obligations[0].settledUnits = "0";
     expect(() => assessCustody(data)).toThrow(/Invalid DvP pair/);
@@ -83,7 +83,7 @@ describe("custody assessment", () => {
 
   it("never reports one DvP leg ready when its partner has a break", () => {
     const data = input(); data.dependencies = [];
-    data.snapshot.cashBalances[0].settledMinorUnits = "10000";
+    data.snapshot.cashBalances[0].settledMinorUnits = "10000000000";
     data.snapshot.obligations = [
       { ...data.snapshot.obligations[0], status: "pending" },
       { ...data.snapshot.obligations[1], id: "security-1", status: "pending", fromAccountId: "acct-b", toAccountId: "acct-a", asset: { kind: "security", instrumentId: "instrument-demo" }, requiredUnits: "25", sourceRecordIds: [] },
@@ -117,7 +117,7 @@ describe("custody assessment", () => {
   it("rejects missing references, invalid reservation, and inconsistent status", () => {
     const missing = input(); missing.snapshot.obligations[0].sourceRecordIds = ["missing"];
     expect(() => assessCustody(missing)).toThrow(/missing source/);
-    const reserve = input(); reserve.snapshot.cashBalances[0].reservedMinorUnits = "9001";
+    const reserve = input(); reserve.snapshot.cashBalances[0].reservedMinorUnits = "9000000001";
     expect(() => assessCustody(reserve)).toThrow(/Reservations exceed/);
     const status = input(); status.snapshot.obligations[0].status = "settled";
     expect(() => assessCustody(status)).toThrow(/contradicts settled units/);

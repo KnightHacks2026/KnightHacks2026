@@ -31,7 +31,7 @@ describe("dataset import and retrieval", () => {
     invalid.accounts[1].externalId = invalid.accounts[0].externalId;
     invalid.sourceRecords[1].externalId = invalid.sourceRecords[0].externalId;
     invalid.dependencies[0].predecessorObligationId = "missing-obligation";
-    invalid.initialCashBalances[0].reservedMinorUnits = "999999";
+    invalid.initialCashBalances[0].reservedMinorUnits = "99999999999";
     const response = await post(invalid);
     expect(response.status).toBe(422);
     const body = await response.json();
@@ -65,7 +65,7 @@ describe("dataset import and retrieval", () => {
     const assessment = await (await custody(new Request(`http://localhost/api/datasets/${datasetId}/custody`), context)).json();
     expect(assessment.data.assessment.obligations).toHaveLength(3);
     const simulationRequest = { contractVersion: "1.0.0", datasetId, expectedDatasetRevision: "1", baseSnapshotId: body.data.snapshotId,
-      interventions: [{ id: "fund-test", kind: "cash_transfer", datasetId, baseSnapshotId: body.data.snapshotId, expectedDatasetRevision: "1", rationale: "test", sourceAccountId: "acct-reserve", targetAccountId: "acct-a", amount: { currency: "USD", minorUnits: "1000" }, effectiveAt: "2026-10-09T13:05:00Z" }] };
+      interventions: [{ id: "fund-test", kind: "cash_transfer", datasetId, baseSnapshotId: body.data.snapshotId, expectedDatasetRevision: "1", rationale: "test", sourceAccountId: "acct-reserve", targetAccountId: "acct-a", amount: { currency: "USD", minorUnits: "1000000000" }, effectiveAt: "2026-10-09T13:05:00Z" }] };
     const simulation = await (await simulate(new Request(`http://localhost/api/datasets/${datasetId}/simulations`, { method: "POST", body: JSON.stringify(simulationRequest) }), context)).json();
     expect(simulation.data.result.status).toBe("valid");
     expect(simulation.data.result.comparison.newlySettledObligationIds).toHaveLength(3);
@@ -166,7 +166,7 @@ describe("dataset import and retrieval", () => {
     const source = await getImportedDataset(datasetId);
     const response = await simulate(new Request(`http://localhost/api/datasets/${datasetId}/simulations`, { method: "POST", body: JSON.stringify({
       contractVersion: "1.0.0", datasetId, expectedDatasetRevision: "2", baseSnapshotId: source?.snapshot.id,
-      interventions: [{ id: "stale", kind: "cash_transfer", datasetId, baseSnapshotId: source?.snapshot.id, expectedDatasetRevision: "2", rationale: "test", sourceAccountId: "acct-reserve", targetAccountId: "acct-a", amount: { currency: "USD", minorUnits: "1000" }, effectiveAt: "2026-10-09T13:05:00Z" }],
+      interventions: [{ id: "stale", kind: "cash_transfer", datasetId, baseSnapshotId: source?.snapshot.id, expectedDatasetRevision: "2", rationale: "test", sourceAccountId: "acct-reserve", targetAccountId: "acct-a", amount: { currency: "USD", minorUnits: "1000000000" }, effectiveAt: "2026-10-09T13:05:00Z" }],
     }) }), context);
     expect(response.status).toBe(409);
     expect((await response.json()).error.code).toBe("REVISION_CONFLICT");
