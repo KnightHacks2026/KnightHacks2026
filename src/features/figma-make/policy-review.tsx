@@ -60,7 +60,7 @@ export function PolicyReview({ onDecision }: { onDecision: (id: string, status: 
 
   return <section className="policy-review" aria-label="Local demo transfer review">
     <div className="policy-review-heading"><div><p className="eyebrow">LOCAL DEMO / HUMAN REVIEW</p><h2>Transfer review queue</h2></div><span>Reviewer: local-demo-reviewer · no authentication or role verification</span></div>
-    <p className="policy-review-disclosure">Only transfers created through New Transfer appear here. Approval means approved for further processing; it does not execute or settle a transfer. For an approvable synthetic case, use destination <strong>Demo Treasury</strong> and an amount up to 10 asset units. Institutional signer and compliance checks remain unverified.</p>
+    <p className="policy-review-disclosure">Only transfers created through New Transfer appear here. Approval means approved for further processing; it does not execute or settle a transfer. For an approvable synthetic case, use destination <strong>Demo Treasury</strong>. Institutional signer and compliance checks remain unverified.</p>
     {loading && <p role="status" className="policy-review-message">Loading transfer reviews…</p>}
     {error && <p role="alert" className="policy-review-error">{error}</p>}
     {notice && <p role="status" className="policy-review-success">{notice}</p>}
@@ -74,7 +74,7 @@ export function PolicyReview({ onDecision }: { onDecision: (id: string, status: 
       <div className="policy-review-detail">{selected ? <>
         <p className="eyebrow">REQUEST / {selected.id}</p><h3>{selected.amount} {selected.asset} → {selected.destination}</h3>
         <p className="policy-review-meta">Source: {selected.source} · Submitted {new Date(selected.createdAt).toLocaleString()} · {selected.evaluation.scenario}</p>
-        <ul className="policy-checks">{selected.evaluation.checks.map(check => <li key={check.id}><div><strong>{check.label}</strong><span className={`policy-result ${check.result.toLowerCase().replace(" ", "-")}`}>{check.result}{check.mandatory ? " · Mandatory" : " · Informational"}</span></div><p>{check.detail}</p></li>)}</ul>
+        <ul className="policy-checks">{selected.evaluation.checks.map(check => <li key={check.id}><div><strong>{check.label}</strong><span className={`policy-result ${check.result.toLowerCase().replace(" ", "-")}`}>{check.result}{check.mandatory ? " · Mandatory" : check.result === "Approval required" ? " · Policy match" : " · Informational"}</span></div><p>{check.detail}</p></li>)}</ul>
         <label className="policy-reason" htmlFor="policy-rejection-reason">Rejection reason</label>
         <textarea id="policy-rejection-reason" maxLength={500} value={reason} onChange={event => setReason(event.target.value)} disabled={working} placeholder="Required when rejecting a request" />
         <div className="policy-review-actions"><button type="button" className="button primary" disabled={working || !selected.evaluation.canApprove} onClick={() => decide("approve")}>{working ? "Recording…" : "Approve for processing"}</button><button type="button" className="button secondary" disabled={working} onClick={() => decide("reject")}>Reject request</button></div>

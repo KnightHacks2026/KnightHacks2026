@@ -1,4 +1,5 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./authenticated-test";
+
 
 const scenarios = [
   { name: "Baseline", color: "rgb(178, 95, 92)", status: "Dependency blocked", finalClass: "is-blocked", meaning: "blocked-dependency" },

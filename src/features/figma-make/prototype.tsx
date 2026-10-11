@@ -2,12 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { exampleData, type ExampleData, type ExampleTransaction } from "@/contracts";
+import { exampleData, type ExampleData, type ExamplePolicy, type ExampleTransaction } from "@/contracts";
 import { TransferDialog } from "./transfer-dialog";
 import { PolicyReview } from "./policy-review";
 import { formatLedgerAmount } from "./ledger-amount";
 import { joinTwinTransfers, policyResultLabel, type TransferReviews, type TwinTransfer } from "./twin-transfers";
 import { SettlementCanvas, SettlementInspector, useSettlementSimulation } from "./settlement-simulation";
+import { activityNodes, topologyDemoActivities, type TopologyActivity } from "./topology-activity";
+import { downloadTopologySvg } from "./topology-export";
+import { TopologyPanel } from "./topology-panel";
+import { CreatePolicy } from "./create-policy";
+import { AllocationDonut, CategorizedInventory, inventoryViews, type InventoryView, type PortfolioDataset } from "./portfolio-inventory";
 
 type Page = "Overview" | "Digital Twin" | "Portfolios" | "Transactions" | "Policy Engine" | "Reporting";
 
@@ -34,11 +39,15 @@ const navigation: { label: Page; icon: IconName }[] = [
 ];
 
 type FinancialDataResponse =
-  | { ok: true; data: ExampleData & { userId: string; datasets: unknown[] } }
+  | { ok: true; data: ExampleData & { userId: string; datasets: PortfolioDataset[] } }
   | { ok: false; error: { message: string } };
 
 type ReviewsResponse =
   | { ok: true; data: TransferReviews }
+  | { ok: false; error: { message: string } };
+
+type CreatePolicyResponse =
+  | { ok: true; data: { policy: ExamplePolicy; archivedPolicyNames: string[] } }
   | { ok: false; error: { message: string } };
 
 type ReconciliationException = {
@@ -107,7 +116,7 @@ function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
 function Rail({ page, setPage }: { page: Page; setPage: (page: Page) => void }) {
   return (
     <aside className="rail">
-      <button className="brand-mark" aria-label="CustodyOS home" onClick={() => setPage("Digital Twin")}><span /></button>
+      <button type="button" className="brand-mark" aria-label="CustodyOS home" onClick={() => setPage("Overview")}><span /></button>
       <nav className="rail-nav" aria-label="Primary navigation">
         {navigation.map((item) => (
           <button
@@ -130,7 +139,7 @@ function Header({ page, setPage, openCommand }: { page: Page; setPage: (page: Pa
   return (
     <>
       <header className="topbar">
-        <button className="wordmark" onClick={() => setPage("Digital Twin")}>CUSTODY<span>OS</span></button>
+        <button type="button" className="wordmark" aria-label="CustodyOS home" onClick={() => setPage("Overview")}>CUSTODY<span>OS</span></button>
         <div className="desk-name">GLOBAL DIGITAL ASSET OPERATIONS</div>
         <div className="market-strip">
           <span>BTC</span><strong>$67,842.10</strong><em>+1.82%</em>
@@ -168,8 +177,12 @@ function PageHeading({ eyebrow, title, description, actions }: { eyebrow: string
 
 function DigitalTwin({ data, reviews, refreshError }: { data: ExampleData; reviews: TransferReviews | null; refreshError: string }) {
   const settlement = useSettlementSimulation();
+  const topologyRef = useRef<SVGSVGElement>(null);
+  const [panel, setPanel] = useState<"console" | "inspect" | null>(null);
+  const [exportNotice, setExportNotice] = useState("");
   const [selected, setSelected] = useState("ACME BANK");
   const [selectedTransferId, setSelectedTransferId] = useState("");
+  const [selectedActivityId, setSelectedActivityId] = useState("");
   const [dragging, setDragging] = useState<string | null>(null);
   const [viewport, setViewport] = useState({ x: 0, y: 0, width: 960, height: 550 });
   const [nodes, setNodes] = useState(() => structuredClone(data.nodes));
@@ -177,6 +190,8 @@ function DigitalTwin({ data, reviews, refreshError }: { data: ExampleData; revie
   const edges = data.edges;
   const transfers = useMemo(() => reviews ? joinTwinTransfers(data.transactions, reviews) : [], [data.transactions, reviews]);
   const selectedTransfer = transfers.find(item => item.transaction.id === selectedTransferId);
+  const selectedActivity = topologyDemoActivities.find(item => item.id === selectedActivityId);
+  const activityPair = selectedActivity ? activityNodes(selectedActivity, nodes) : null;
   const nodeById = Object.fromEntries(nodes.map((node) => [node.id, node]));
 
   useEffect(() => {
@@ -203,7 +218,13 @@ function DigitalTwin({ data, reviews, refreshError }: { data: ExampleData; revie
   const beginDrag = (event: React.PointerEvent<SVGGElement>, id: string) => {
     event.currentTarget.setPointerCapture(event.pointerId);
     setSelected(id);
+    setSelectedActivityId("");
     setDragging(id);
+  };
+
+  const selectActivity = (activity: TopologyActivity) => {
+    setSelectedActivityId(activity.id);
+    setSelected(activity.nodeIds[0]);
   };
 
   const zoomGraph = (event: React.WheelEvent<SVGSVGElement>) => {
@@ -225,6 +246,15 @@ function DigitalTwin({ data, reviews, refreshError }: { data: ExampleData; revie
 
   const resetZoom = () => setViewport({ x: 0, y: 0, width: 960, height: 550 });
   const zoomPercent = Math.round((960 / viewport.width) * 100);
+  const exportView = () => {
+    try {
+      if (!topologyRef.current) throw new Error("The topology is not ready.");
+      downloadTopologySvg(topologyRef.current);
+      setExportNotice("Topology SVG downloaded.");
+    } catch (error) {
+      setExportNotice(error instanceof Error ? `Export failed: ${error.message}` : "Export failed. Try again.");
+    }
+  };
 
   return (
     <main className="page twin-page">
@@ -232,13 +262,15 @@ function DigitalTwin({ data, reviews, refreshError }: { data: ExampleData; revie
         eyebrow={settlement.mode ? "DIGITAL TWIN / SYNTHETIC PREVIEW" : "DIGITAL TWIN / LIVE ESTATE"}
         title={settlement.mode ? "Settlement Simulation" : "Institutional Asset Topology"}
         description={settlement.mode ? "Explore a three-leg settlement dependency chain and compare local funding previews." : "A real-time model of entities, wallets, controls, networks, and settlement exposure."}
-        actions={settlement.mode ? undefined : <><button className="button secondary">Export view</button><button className="button primary">Open console</button></>}
+        actions={settlement.mode ? undefined : <><button type="button" className="button secondary" onClick={exportView}>Export view</button><button type="button" className="button primary" onClick={() => setPanel("console")}>Open console</button></>}
       />
+      {exportNotice && <p className="topology-export-notice" role="status">{exportNotice}</p>}
       <div className="twin-mode-switch" role="group" aria-label="Digital Twin mode"><button type="button" aria-pressed={!settlement.mode} onClick={() => settlement.setMode(false)}>Institutional topology</button><button type="button" aria-pressed={settlement.mode} onClick={() => settlement.setMode(true)}>Settlement Simulation</button></div>
       <div className={`twin-layout ${settlement.mode ? "twin-layout--simulation" : ""}`}>
         {settlement.mode ? <SettlementCanvas state={settlement} /> : <section className="graph-shell">
           <div className="graph-meta"><span>DEMO TOPOLOGY</span><b>● {nodes.length} VISIBLE NODES</b><span>{edges.length} EDGES</span><span>PERSISTED REQUESTS IN INSPECTOR</span></div>
           <svg
+            ref={topologyRef}
             className={`network ${dragging ? "is-dragging" : ""}`}
             viewBox={`${viewport.x} ${viewport.y} ${viewport.width} ${viewport.height}`}
             role="img"
@@ -257,13 +289,19 @@ function DigitalTwin({ data, reviews, refreshError }: { data: ExampleData; revie
                 return <path className={`${to.type === "policy" ? "policy-edge" : ""} ${isPrimaryConnection ? "selected-edge" : ""}`} key={`${fromId}-${toId}`} d={`M${from.x} ${from.y} Q ${(from.x + to.x) / 2} ${(from.y + to.y) / 2 + curve} ${to.x} ${to.y}`} />;
               })}
             </g>
+            {selectedActivity && activityPair && <g className={`topology-activity-signal is-${selectedActivity.state}`} aria-hidden="true">
+              <path className="topology-activity-signal__track" d={`M${activityPair[0].x} ${activityPair[0].y} L${activityPair[1].x} ${activityPair[1].y}`} />
+              <path className="topology-activity-signal__pulse" d={`M${activityPair[0].x} ${activityPair[0].y} L${activityPair[1].x} ${activityPair[1].y}`} />
+              <circle className="topology-activity-signal__endpoint" cx={activityPair[0].x} cy={activityPair[0].y} r={activityPair[0].r + 6} />
+              <circle className="topology-activity-signal__endpoint" cx={activityPair[1].x} cy={activityPair[1].y} r={activityPair[1].r + 6} />
+            </g>}
             {nodes.map((n) => (
               <g
-                className={`network-node ${n.type} ${selected === n.id ? "selected" : ""} ${dragging === n.id ? "dragging" : ""}`}
+                className={`network-node ${n.type} ${selected === n.id ? "selected" : ""} ${selectedActivity?.nodeIds.includes(n.id) ? `activity-associated activity-${selectedActivity.state}` : ""} ${dragging === n.id ? "dragging" : ""}`}
                 key={n.id}
                 transform={`translate(${n.x} ${n.y})`}
                 onPointerDown={(event) => beginDrag(event, n.id)}
-                onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") setSelected(n.id); }}
+                onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { setSelected(n.id); setSelectedActivityId(""); } }}
                 role="button"
                 tabIndex={0}
               >
@@ -283,15 +321,17 @@ function DigitalTwin({ data, reviews, refreshError }: { data: ExampleData; revie
           <div className="graph-controls">CLICK TO SELECT <span>·</span> DRAG NODES <span>·</span> SCROLL TO ZOOM</div>
           <button className="zoom-reset" onClick={resetZoom} aria-label="Reset graph zoom">{zoomPercent}% <span>RESET</span></button>
         </section>}
-        {settlement.mode ? <SettlementInspector state={settlement} /> : <EntityInspector selected={selected} assets={data.assets} transfers={transfers} selectedTransfer={selectedTransfer} onSelectTransfer={setSelectedTransferId} refreshError={refreshError} reviewsLoaded={reviews !== null} />}
+        {settlement.mode ? <SettlementInspector state={settlement} /> : <EntityInspector selected={selected} selectedActivity={selectedActivity} onSelectActivity={selectActivity} assets={data.assets} transfers={transfers} selectedTransfer={selectedTransfer} onSelectTransfer={setSelectedTransferId} onInspect={() => setPanel("inspect")} refreshError={refreshError} reviewsLoaded={reviews !== null} />}
       </div>
+      {panel && <TopologyPanel mode={panel} selected={selected} onSelect={setSelected} onClose={() => setPanel(null)} onSettlement={() => { setPanel(null); settlement.setMode(true); }} data={data} transfers={transfers} reviews={reviews} />}
     </main>
   );
 }
 
-function EntityInspector({ selected, assets, transfers, selectedTransfer, onSelectTransfer, refreshError, reviewsLoaded }: {
+function EntityInspector({ selected, selectedActivity, onSelectActivity, assets, transfers, selectedTransfer, onSelectTransfer, onInspect, refreshError, reviewsLoaded }: {
   selected: string; assets: ExampleData["assets"]; transfers: TwinTransfer[]; selectedTransfer?: TwinTransfer;
-  onSelectTransfer: (id: string) => void; refreshError: string; reviewsLoaded: boolean;
+  selectedActivity?: TopologyActivity; onSelectActivity: (activity: TopologyActivity) => void;
+  onSelectTransfer: (id: string) => void; onInspect: () => void; refreshError: string; reviewsLoaded: boolean;
 }) {
   const netAssetValue = sumAssetValues(assets);
   return (
@@ -299,6 +339,22 @@ function EntityInspector({ selected, assets, transfers, selectedTransfer, onSele
       <p className="eyebrow">SELECTED ENTITY</p>
       <h2>{selected}</h2>
       <p className="inspector-sub">Synthetic estate view · Edges are not transfer routes</p>
+      <section className="topology-activity" aria-label="Synthetic operational activity">
+        <div className="topology-activity__heading"><p className="eyebrow">OPERATIONAL ACTIVITY</p><span>SYNTHETIC DEMO</span></div>
+        <p className="topology-activity__note">Preview states only. Signals show illustrative node associations, not verified settlement routes or persisted transactions.</p>
+        <div className="topology-activity__feed" aria-label="Synthetic activity feed">
+          {topologyDemoActivities.map(activity => <button type="button" key={activity.id} className={`topology-activity__item is-${activity.state}`} aria-pressed={selectedActivity?.id === activity.id} onClick={() => onSelectActivity(activity)}>
+            <span className="topology-activity__dot" /><span className="topology-activity__main"><strong>{activity.type}</strong><small>{activity.id} · {activity.time}</small><small>{activity.source && activity.destination ? `${activity.source} → ${activity.destination}` : "Hypothetical preview"}</small></span><span className="topology-activity__amount">{activity.amount ?? "—"}</span><em>{activity.status}</em>
+          </button>)}
+        </div>
+        {selectedActivity && <div className={`topology-activity__detail is-${selectedActivity.state}`} aria-label="Selected operational event">
+          <div className="topology-activity__detail-head"><span>{selectedActivity.state === "simulation" ? "HYPOTHETICAL / DEMO" : "OPERATIONAL STATE / DEMO"}</span><strong>{selectedActivity.id}</strong></div>
+          <h3>{selectedActivity.type}</h3>
+          <p className="topology-activity__status">{selectedActivity.status}</p>
+          <dl><div><dt>Related nodes</dt><dd>{selectedActivity.nodeIds.join(" → ")}</dd></div><div><dt>Transfer amount</dt><dd>{selectedActivity.amount ?? "Not applicable"}</dd></div><div><dt>Source / destination</dt><dd>{selectedActivity.source && selectedActivity.destination ? `${selectedActivity.source} → ${selectedActivity.destination}` : "Not applicable"}</dd></div>{selectedActivity.reason && <div><dt>Policy reason</dt><dd>{selectedActivity.reason}</dd></div>}</dl>
+          <p className="eyebrow">EVENT TIMELINE</p><ol>{selectedActivity.timeline.map(step => <li key={step}>{step}</li>)}</ol>
+        </div>}
+      </section>
       <div className="inspector-value"><span>ASSETS UNDER CUSTODY</span><strong>{compactUsdFormatter.format(netAssetValue)}</strong></div>
       <div className="split-stats"><div><span>SAMPLE WALLETS</span><strong>18</strong></div><div><span>SAMPLE POLICIES</span><strong>12</strong></div></div>
       <div className="coverage">
@@ -321,13 +377,13 @@ function EntityInspector({ selected, assets, transfers, selectedTransfer, onSele
           <p>From {selectedTransfer.review.source} to {selectedTransfer.review.destination}</p>
           <p>Status: {selectedTransfer.review.status}</p>
           <p>{selectedTransfer.review.evaluation.scenario} · Institutional evidence is not verified.</p>
-          <ul>{selectedTransfer.review.evaluation.checks.map(check => <li key={check.id}><span>{check.label}</span><em className={`policy-result ${check.result.toLowerCase().replace(" ", "-")}`}>{policyResultLabel(check.result)}</em><small>{check.detail}</small></li>)}</ul>
+          <ul>{selectedTransfer.review.evaluation.checks.map(check => <li key={check.id}><span>{check.label}</span><em className={`policy-result ${check.result.toLowerCase().replace(" ", "-")}`}>{policyResultLabel(check.result)}{check.result === "Approval required" ? " · Policy match" : ""}</em><small>{check.detail}</small></li>)}</ul>
           {selectedTransfer.audit && <p className="twin-audit">{selectedTransfer.audit.decision === "approve" ? "Approved for processing" : "Rejected"} · {new Date(selectedTransfer.audit.occurredAt).toLocaleString()}<br />Reason: {selectedTransfer.audit.reason || "No reason supplied"}</p>}
         </div>}
         {selectedTransfer?.kind === "sample" && <p className="twin-sample-note">Synthetic sample transaction. No persisted transfer review or policy evaluation is available.</p>}
       </div>
-      <button className="button primary inspector-button">Inspect entity <Icon name="arrow" size={14} /></button>
-      <p className="entity-id">ENTITY ID · ENT-001-NY</p>
+      <button type="button" className="button primary inspector-button" onClick={onInspect}>Inspect entity <Icon name="arrow" size={14} /></button>
+      <p className="entity-id">DEMO TOPOLOGY ID · {selected}</p>
     </aside>
   );
 }
@@ -396,10 +452,10 @@ function Overview({ data, onNewTransfer }: { data: ExampleData; onNewTransfer: (
   );
 }
 
-function Portfolios({ data, userId, onOpenTwin }: { data: ExampleData; userId: string; onOpenTwin: () => void }) {
+function Portfolios({ data, datasets, userId, onOpenTwin }: { data: ExampleData; datasets: PortfolioDataset[]; userId: string; onOpenTwin: () => void }) {
   const { assets } = data;
   const netAssetValue = sumAssetValues(assets);
-  const [active, setActive] = useState("Consolidated");
+  const [active, setActive] = useState<InventoryView>("Consolidated");
   const [reconcileOpen, setReconcileOpen] = useState(false);
   const [reconcileLoading, setReconcileLoading] = useState(false);
   const [reconcileError, setReconcileError] = useState("");
@@ -430,34 +486,20 @@ function Portfolios({ data, userId, onOpenTwin }: { data: ExampleData; userId: s
   };
   return (
     <main className="page">
-      <PageHeading eyebrow="PORTFOLIOS / CONSOLIDATED" title="Asset Inventory" description="Position-level visibility across custody, staking, settlement, and treasury accounts." actions={<button className="button secondary" onClick={runReconciliation}>Run reconciliation</button>} />
-      <div className="portfolio-switcher">{["Consolidated", "Cold Storage", "Treasury", "Client Omnibus"].map(x => <button className={active === x ? "active" : ""} onClick={() => setActive(x)} key={x}>{x}</button>)}</div>
+      <PageHeading eyebrow={`PORTFOLIOS / ${active.toUpperCase()}`} title="Asset Inventory" description="Position-level visibility for loaded sample assets and classified imported accounts." actions={<button className="button secondary" onClick={runReconciliation}>Run reconciliation</button>} />
+      <div className="portfolio-switcher" role="tablist" aria-label="Inventory views">{inventoryViews.map(x => <button type="button" role="tab" aria-selected={active === x} className={active === x ? "active" : ""} onClick={() => setActive(x)} key={x}>{x}</button>)}</div>
       <section className="portfolio-ledger">
+        {active === "Consolidated" ? <>
         <div className="portfolio-overview">
           <div className="portfolio-summary">
             <div><span>NET ASSET VALUE</span><strong>{compactUsdFormatter.format(netAssetValue)}</strong></div>
-            <div><span>24H MOVEMENT</span><strong className="positive">+$116.24M</strong></div>
-            <div><span>AVAILABLE LIQUIDITY</span><strong>$1.84B</strong></div>
-            <div><span>NETWORKS</span><strong>14</strong></div>
+            <div><span>SAMPLE 24H MOVEMENT</span><strong className="positive">+$116.24M</strong></div>
+            <div><span>SAMPLE LIQUIDITY</span><strong>$1.84B</strong></div>
+            <div><span>SAMPLE NETWORKS</span><strong>14</strong></div>
           </div>
-          <div className="allocation-donut">
-            <div className="donut-visual">
-              <svg viewBox="0 0 120 120" role="img" aria-label="Portfolio asset allocation">
-                <circle className="donut-track" cx="60" cy="60" r="44" />
-                <circle className="donut-segment bitcoin" cx="60" cy="60" r="44" pathLength="100" />
-                <circle className="donut-segment ethereum" cx="60" cy="60" r="44" pathLength="100" />
-                <circle className="donut-segment solana" cx="60" cy="60" r="44" pathLength="100" />
-                <circle className="donut-segment stable" cx="60" cy="60" r="44" pathLength="100" />
-                <circle className="donut-segment other" cx="60" cy="60" r="44" pathLength="100" />
-              </svg>
-              <span><strong>48</strong><small>ASSETS</small></span>
-            </div>
-            <div className="donut-legend">
-              <p className="eyebrow">ALLOCATION</p>
-              {assets.map((asset) => <div key={asset.symbol}><i /><span>{asset.symbol}</span><strong>{asset.value}</strong><em>{asset.share}%</em></div>)}
-            </div>
-          </div>
+          <AllocationDonut assets={assets} />
         </div>
+        <p className="portfolio-disclosure">Consolidated positions are the loaded sample asset summary. They are not mapped to imported custody accounts.</p>
         <div className="ledger-head"><span>ASSET</span><span>BALANCE</span><span>MARKET VALUE</span><span>24H</span><span>ALLOCATION</span></div>
         {assets.map((asset) => (
           <button className="asset-row" key={asset.symbol}>
@@ -467,6 +509,8 @@ function Portfolios({ data, userId, onOpenTwin }: { data: ExampleData; userId: s
             <span className="allocation"><i><b style={{ width: `${asset.share * 2.1}%` }} /></i>{asset.share}%</span>
           </button>
         ))}
+        {assets.length === 0 && <div className="portfolio-empty" role="status"><h2>No consolidated assets</h2><p>This user has no loaded sample asset positions.</p></div>}
+        </> : <CategorizedInventory view={active} datasets={datasets} />}
       </section>
       {reconcileOpen && <div className="reconcile-overlay" onMouseDown={() => setReconcileOpen(false)}>
         <aside className="reconcile-panel" role="dialog" aria-modal="true" aria-labelledby="reconcile-title" onMouseDown={event => event.stopPropagation()}>
@@ -536,30 +580,221 @@ function Transactions({ data, onNewTransfer, notice }: { data: ExampleData; onNe
   );
 }
 
-function PolicyEngine({ data, onDecision }: { data: ExampleData; onDecision: (id: string, status: ExampleTransaction["status"]) => void }) {
+function CreatePolicyDialog({ userId, assets, policies, onClose, onCreated }: {
+  userId: string;
+  assets: ExampleData["assets"];
+  policies: ExamplePolicy[];
+  onClose: () => void;
+  onCreated: (policy: ExamplePolicy, archivedPolicyNames: string[]) => void;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const selectableAssets = assets.filter(asset => asset.symbol !== "OTHER");
+  const [selectedAsset, setSelectedAsset] = useState(selectableAssets[0]?.symbol ?? "");
+  const [archivePolicyNames, setArchivePolicyNames] = useState<string[]>([]);
+  const overlappingPolicies = policies.filter(policy => policy.state === "Enforced" && policy.asset === selectedAsset && policy.threshold);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !submitting) onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, submitting]);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSubmitting(true);
+    setError("");
+    const form = new FormData(event.currentTarget);
+    try {
+      const response = await fetch("/api/policies", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          name: form.get("name"),
+          asset: form.get("asset"),
+          threshold: form.get("threshold"),
+          archivePolicyNames,
+        }),
+      });
+      const body = await response.json() as CreatePolicyResponse;
+      if (!response.ok || !body.ok) throw new Error(body.ok ? "Unable to save this policy." : body.error.message);
+      onCreated(body.data.policy, body.data.archivedPolicyNames);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Unable to save this policy.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return <div className="transfer-overlay" onMouseDown={event => { if (event.target === event.currentTarget && !submitting) onClose(); }}>
+    <section className="transfer-dialog policy-dialog" role="dialog" aria-modal="true" aria-labelledby="create-policy-title" onMouseDown={event => event.stopPropagation()}>
+      <div className="transfer-dialog-head">
+        <div><p className="eyebrow">POLICY ENGINE / NEW CONTROL</p><h2 id="create-policy-title">Create policy</h2></div>
+        <button type="button" className="transfer-close" aria-label="Close policy form" disabled={submitting} onClick={onClose}>×</button>
+      </div>
+      <p className="transfer-explainer">Flag new transfers for human review when their asset amount exceeds a threshold. Policies are saved in this workspace and evaluated when transfer reviews load.</p>
+      <form onSubmit={submit}>
+        <label htmlFor="policy-name">Policy name</label>
+        <input id="policy-name" name="name" placeholder="Large BTC transfer review" minLength={3} maxLength={80} required disabled={submitting} />
+        <label htmlFor="policy-scope">Scope</label>
+        <input id="policy-scope" value="All new transfers" disabled readOnly />
+        <div className="policy-rule-fields">
+          <div>
+            <label htmlFor="policy-asset">Asset</label>
+            <select id="policy-asset" name="asset" value={selectedAsset} onChange={event => { setSelectedAsset(event.target.value); setArchivePolicyNames([]); }} required disabled={submitting || selectableAssets.length === 0}>
+              {selectableAssets.map(asset => <option key={asset.symbol} value={asset.symbol}>{asset.symbol} · {asset.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="policy-threshold">Amount threshold ({selectedAsset || "asset units"})</label>
+            <input id="policy-threshold" name="threshold" inputMode="decimal" placeholder="5" pattern="\d{1,18}(\.\d{1,18})?" title="Use a positive decimal amount." required disabled={submitting} />
+          </div>
+        </div>
+        {overlappingPolicies.length > 0 && <section className="policy-overlap" aria-label="Overlapping policies">
+          <strong>Existing enforced {selectedAsset} rules</strong>
+          <p>These thresholds can match the same transfer. Archive an older rule if this policy replaces it; otherwise both stay active and may both appear in review. Warnings cover structured amount rules only.</p>
+          {overlappingPolicies.map(policy => <label key={policy.name}>
+            <input type="checkbox" checked={archivePolicyNames.includes(policy.name)} disabled={submitting}
+              onChange={event => setArchivePolicyNames(current => event.target.checked
+                ? [...current, policy.name]
+                : current.filter(name => name !== policy.name))} />
+            <span><b>{policy.name}</b><small>{policy.asset} amount &gt; {policy.threshold} · currently enforced</small></span>
+            <em>{archivePolicyNames.includes(policy.name) ? "Archive on save" : "Keep active"}</em>
+          </label>)}
+        </section>}
+        <label htmlFor="policy-action">Action</label>
+        <input id="policy-action" value="Flag for human review" disabled readOnly />
+        <div className="policy-preview"><span>DEPLOYMENT STATE</span><strong>Enforced on save</strong><small>A matching request remains pending for a person to approve or reject. Approval does not move assets or settle a transfer.</small></div>
+        {error && <p className="transfer-error" role="alert">{error}</p>}
+        <div className="transfer-actions">
+          <button type="button" className="button secondary" onClick={onClose} disabled={submitting}>Cancel</button>
+          <button type="submit" className="button primary" disabled={submitting || selectableAssets.length === 0}>{submitting ? "Saving…" : "Save policy"}</button>
+        </div>
+      </form>
+    </section>
+  </div>;
+}
+
+function PolicyEngine({ data, userId, onDecision, onPolicySaved }: {
+  data: ExampleData;
+  userId: string;
+  onDecision: (id: string, status: ExampleTransaction["status"]) => void;
+  onPolicySaved: (policy: ExamplePolicy, archivedPolicyNames?: string[]) => void;
+}) {
   const [selected, setSelected] = useState(0);
-  const policies = data.policies;
+  const [createOpen, setCreateOpen] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState("");
+  const [policyActionError, setPolicyActionError] = useState("");
+  const [policyActionWorking, setPolicyActionWorking] = useState(false);
+  const policies = data.policies.filter(policy => showArchived ? policy.state === "Archived" : policy.state !== "Archived");
+  const activePolicyCount = data.policies.filter(policy => policy.state !== "Archived").length;
+  const archivedPolicyCount = data.policies.length - activePolicyCount;
+  const [thresholdOpen, setThresholdOpen] = useState(false);
   const selectedPolicyIndex = Math.min(selected, Math.max(0, policies.length - 1));
+  const selectedPolicy = policies[selectedPolicyIndex];
+
+  async function updatePolicyArchive(policy: ExamplePolicy, action: "archive" | "restore") {
+    if (policyActionWorking) return;
+    setPolicyActionWorking(true);
+    setPolicyActionError("");
+    try {
+      const response = await fetch(`/api/policies/${encodeURIComponent(policy.name)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, action }),
+      });
+      const body = await response.json() as { ok: true; data: { state: string } } | { ok: false; error: { message: string } };
+      if (!response.ok || !body.ok) throw new Error(body.ok ? "Unable to update this policy." : body.error.message);
+      onPolicySaved({ ...policy, state: body.data.state });
+      setArchiveTarget("");
+      setSelected(0);
+    } catch (cause) {
+      setPolicyActionError(cause instanceof Error ? cause.message : "Unable to update this policy.");
+    } finally {
+      setPolicyActionWorking(false);
+    }
+  }
+
+  async function updatePolicyState(policy: ExamplePolicy, state: "Enforced" | "Disabled") {
+    if (policyActionWorking) return;
+    setPolicyActionWorking(true);
+    setPolicyActionError("");
+    try {
+      const response = await fetch(`/api/policies/${encodeURIComponent(policy.name)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, state }),
+      });
+      const body = await response.json() as { ok: true; data: { state: string } } | { ok: false; error: { message: string } };
+      if (!response.ok || !body.ok) throw new Error(body.ok ? "Unable to update this policy." : body.error.message);
+      onPolicySaved({ ...policy, state: body.data.state });
+    } catch (cause) {
+      setPolicyActionError(cause instanceof Error ? cause.message : "Unable to update this policy.");
+    } finally {
+      setPolicyActionWorking(false);
+    }
+  }
+
   return (
     <main className="page policy-page">
-      <PageHeading eyebrow="CONTROL PLANE / POLICY ENGINE" title="Programmable Governance" description="Authorization logic mapped directly to entities, wallets, transaction types, and risk limits." actions={<button className="button primary">Create policy</button>} />
+      <PageHeading eyebrow="CONTROL PLANE / POLICY ENGINE" title="Programmable Governance" description="Authorization logic mapped directly to entities, wallets, transaction types, and risk limits." actions={<div style={{ display: "flex", gap: 8 }}><button type="button" className="button secondary" onClick={() => setCreateOpen(true)}>Create draft</button><button type="button" className="button primary" onClick={() => setThresholdOpen(true)}>Create amount rule</button></div>} />
       <div className="policy-workbench">
         <section className="policy-list">
-          <div className="policy-list-title"><p className="eyebrow">POLICY LIBRARY</p><span>{policies.length} SAMPLE POLICIES</span></div>
+          <div className="policy-list-title"><p className="eyebrow">POLICY LIBRARY</p><span>{policies.length} {showArchived ? "ARCHIVED" : "ACTIVE"}</span></div>
+          <div className="policy-list-filter" role="tablist" aria-label="Policy status">
+            <button role="tab" aria-selected={!showArchived} className={!showArchived ? "active" : ""} onClick={() => { setShowArchived(false); setSelected(0); }}>Active <span>{activePolicyCount}</span></button>
+            <button role="tab" aria-selected={showArchived} className={showArchived ? "active" : ""} onClick={() => { setShowArchived(true); setSelected(0); }}>Archived <span>{archivedPolicyCount}</span></button>
+          </div>
           {policies.map((policy, i) => <button onClick={() => setSelected(i)} className={selectedPolicyIndex === i ? "active" : ""} key={policy.name}><span><strong>{policy.name}</strong><small>{policy.scope}</small></span><em>{policy.state}</em></button>)}
+          {policies.length === 0 && <p className="policy-list-empty">{showArchived ? "No archived policies." : "No active policies."}</p>}
         </section>
         <section className="policy-canvas">
-          {policies.length > 0 && <><div className="policy-canvas-head"><div><p className="eyebrow">POLICY / POL-00{selectedPolicyIndex + 1}</p><h2>{policies[selectedPolicyIndex].name}</h2></div><span className={policies[selectedPolicyIndex].state === "Review" ? "review" : ""}>● {policies[selectedPolicyIndex].state}</span></div>
-          <div className="logic-flow">
-            <div className="logic-node"><span>WHEN</span><strong>Transaction initiated</strong><small>{policies[selectedPolicyIndex].scope}</small></div><i />
-            <div className="logic-node"><span>CHECK</span><strong>Risk & compliance</strong><small>Sanctions · velocity · allowlist</small></div><i />
-            <div className="logic-node featured"><span>REQUIRE</span><strong>{policies[selectedPolicyIndex].rule.split(" · ")[0]}</strong><small>Approved institutional signers</small></div><i />
-            <div className="logic-node"><span>ENFORCE</span><strong>{policies[selectedPolicyIndex].rule.split(" · ")[1] || "Verified route"}</strong><small>Block on policy exception</small></div>
-          </div>
-          <div className="policy-metrics"><div><span>SAMPLE EXECUTIONS / 30D</span><strong>2,481</strong></div><div><span>SAMPLE BLOCKED</span><strong>14</strong></div><div><span>SAMPLE AVG. DECISION</span><strong>184ms</strong></div><div><span>SAMPLE COVERAGE</span><strong>{policies[selectedPolicyIndex].coverage}%</strong></div></div></>}
+          {selectedPolicy && <>
+            <div className="policy-canvas-head"><div><p className="eyebrow">POLICY / POL-{String(selectedPolicyIndex + 1).padStart(3, "0")}</p><h2>{selectedPolicy.name}</h2></div><div className="policy-state-control"><span className={selectedPolicy.state === "Review" ? "review" : selectedPolicy.state === "Archived" ? "archived" : selectedPolicy.state === "Disabled" ? "review" : ""}>● {selectedPolicy.state}</span>{showArchived
+              ? <button type="button" className="button secondary" disabled={policyActionWorking} onClick={() => void updatePolicyArchive(selectedPolicy, "restore")}>{policyActionWorking ? "Restoring…" : "Restore"}</button>
+              : <>{selectedPolicy.asset && selectedPolicy.threshold && <button type="button" className="button secondary" disabled={policyActionWorking} onClick={() => void updatePolicyState(selectedPolicy, selectedPolicy.state === "Disabled" ? "Enforced" : "Disabled")}>{policyActionWorking ? "Saving…" : selectedPolicy.state === "Disabled" ? "Enable" : "Disable"}</button>}<button type="button" className="button secondary" disabled={policyActionWorking} onClick={() => setArchiveTarget(selectedPolicy.name)}>Archive</button></>}</div></div>
+            {selectedPolicy.state === "Draft" ? <div className="policy-draft-detail"><p className="eyebrow">PROPOSED CONTROL</p><p><strong>Scope:</strong> {selectedPolicy.scope}</p><p><strong>Rule:</strong> {selectedPolicy.rule}</p><p>This saved draft is not evaluated by transfer review. No enforcement or coverage is claimed.</p></div> : <>
+              <div className="logic-flow">
+                <div className="logic-node"><span>WHEN</span><strong>Transaction initiated</strong><small>{selectedPolicy.scope}</small></div><i />
+                <div className="logic-node"><span>CHECK</span><strong>{selectedPolicy.asset ? `${selectedPolicy.asset} amount` : "Risk & compliance"}</strong><small>{selectedPolicy.asset ? `Above ${selectedPolicy.threshold} ${selectedPolicy.asset}` : "Sanctions · velocity · allowlist"}</small></div><i />
+                <div className="logic-node featured"><span>{selectedPolicy.asset ? "MATCH" : "REQUIRE"}</span><strong>{selectedPolicy.asset ? "Human review" : selectedPolicy.rule.split(" · ")[0]}</strong><small>{selectedPolicy.asset ? "Operator decision required" : "Approved institutional signers"}</small></div><i />
+                <div className="logic-node"><span>ENFORCE</span><strong>{selectedPolicy.asset ? "Record policy match" : selectedPolicy.rule.split(" · ")[1] || "Verified route"}</strong><small>{selectedPolicy.asset ? "No asset movement" : "Block on policy exception"}</small></div>
+              </div>
+              {selectedPolicy.asset
+                ? <div className="policy-metrics"><div><span>RULE SCOPE</span><strong>New transfers</strong></div><div><span>ASSET</span><strong>{selectedPolicy.asset}</strong></div><div><span>THRESHOLD</span><strong>&gt; {selectedPolicy.threshold}</strong></div><div><span>EXECUTIONS</span><strong>From next review</strong></div></div>
+                : <div className="policy-metrics"><div><span>SAMPLE EXECUTIONS / 30D</span><strong>2,481</strong></div><div><span>SAMPLE BLOCKED</span><strong>14</strong></div><div><span>SAMPLE AVG. DECISION</span><strong>184ms</strong></div><div><span>SAMPLE COVERAGE</span><strong>{selectedPolicy.coverage}%</strong></div></div>}
+            </>}
+            {policyActionError && <p className="transfer-error" role="alert">{policyActionError}</p>}
+          </>}
         </section>
       </div>
-      <PolicyReview onDecision={onDecision} />
+      <PolicyReview key={data.policies.map(policy => `${policy.name}:${policy.state}`).join("|")} onDecision={onDecision} />
+      {createOpen && <CreatePolicy userId={userId} onClose={() => setCreateOpen(false)} onCreated={policy => {
+        onPolicySaved(policy);
+        setShowArchived(false);
+        setSelected(activePolicyCount);
+      }} />}
+      {thresholdOpen && <CreatePolicyDialog userId={userId} assets={data.assets} policies={data.policies} onClose={() => setThresholdOpen(false)} onCreated={(policy, archivedPolicyNames) => {
+        onPolicySaved(policy, archivedPolicyNames);
+        setShowArchived(false);
+        setSelected(activePolicyCount);
+        setThresholdOpen(false);
+      }} />}
+      {archiveTarget && <div className="transfer-overlay" onMouseDown={event => { if (event.target === event.currentTarget && !policyActionWorking) setArchiveTarget(""); }}>
+        <section className="transfer-dialog policy-dialog" role="alertdialog" aria-modal="true" aria-labelledby="archive-policy-title" onMouseDown={event => event.stopPropagation()}>
+          <div className="transfer-dialog-head"><div><p className="eyebrow">POLICY ENGINE / ARCHIVE</p><h2 id="archive-policy-title">Archive policy?</h2></div></div>
+          <p className="transfer-explainer"><strong>{archiveTarget}</strong> will stop applying to future transfer reviews. Its audit history and definition will remain available in Archived policies. You can restore it later.</p>
+          {policyActionError && <p className="transfer-error" role="alert">{policyActionError}</p>}
+          <div className="transfer-actions"><button className="button secondary" disabled={policyActionWorking} onClick={() => setArchiveTarget("")}>Cancel</button><button className="button primary" disabled={policyActionWorking} onClick={() => {
+            const policy = data.policies.find(item => item.name === archiveTarget);
+            if (policy) void updatePolicyArchive(policy, "archive");
+          }}>{policyActionWorking ? "Archiving…" : "Archive policy"}</button></div>
+        </section>
+      </div>}
     </main>
   );
 }
@@ -588,9 +823,10 @@ function Reporting({ data }: { data: ExampleData }) {
     transaction.value.trim() === "—" ? total : total + parseUsdValue(transaction.value, transaction.id), 0);
   const completedTransactions = data.transactions.filter(transaction => transaction.status === "Completed").length;
   const attentionTransactions = data.transactions.length - completedTransactions;
-  const enforcedPolicies = data.policies.filter(policy => policy.state === "Enforced").length;
-  const averageCoverage = data.policies.length
-    ? Math.round(data.policies.reduce((total, policy) => total + policy.coverage, 0) / data.policies.length)
+  const activePolicies = data.policies.filter(policy => policy.state !== "Archived");
+  const enforcedPolicies = activePolicies.filter(policy => policy.state === "Enforced").length;
+  const averageCoverage = activePolicies.length
+    ? Math.round(activePolicies.reduce((total, policy) => total + policy.coverage, 0) / activePolicies.length)
     : 0;
   const openReport = () => {
     setGeneratedAt(new Date().toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" }));
@@ -635,12 +871,12 @@ function Reporting({ data }: { data: ExampleData }) {
                 <div><span>ASSETS UNDER CUSTODY</span><strong>{compactUsdFormatter.format(sumAssetValues(data.assets))}</strong><small>{data.assets.length} asset classes</small></div>
                 <div><span>LOADED ACTIVITY</span><strong>{compactUsdFormatter.format(transactionValue)}</strong><small>{data.transactions.length} transactions</small></div>
                 <div><span>REQUIRES ATTENTION</span><strong>{attentionTransactions}</strong><small>{completedTransactions} completed</small></div>
-                <div><span>POLICY COVERAGE</span><strong>{averageCoverage}%</strong><small>{enforcedPolicies} of {data.policies.length} enforced</small></div>
+                <div><span>POLICY COVERAGE</span><strong>{averageCoverage}%</strong><small>{enforcedPolicies} enforced · {activePolicies.length} active</small></div>
               </div>
             </section>
             <div className="report-columns">
               <section><p className="eyebrow">TRANSACTION EVIDENCE</p>{data.transactions.slice(0, 5).map(transaction => <div className="report-evidence-row" key={transaction.id}><span><strong>{transaction.type} · {transaction.asset}</strong><small>{transaction.id} · {transaction.route}</small></span><em>{transaction.status}</em></div>)}</section>
-              <section><p className="eyebrow">POLICY CONTROLS</p>{data.policies.map(policy => <div className="report-evidence-row" key={policy.name}><span><strong>{policy.name}</strong><small>{policy.scope} · {policy.rule}</small></span><em>{policy.coverage}%</em></div>)}</section>
+              <section><p className="eyebrow">POLICY CONTROLS</p>{data.policies.map(policy => <div className="report-evidence-row" key={policy.name}><span><strong>{policy.name}</strong><small>{policy.scope} · {policy.rule}</small></span><em>{policy.state} · {policy.coverage}%</em></div>)}</section>
             </div>
             <div className="report-disclosure"><Icon name="check" size={18} /><span><strong>Evidence package generated from the loaded workspace</strong><small>This report always represents the October 2026 sample snapshot. Calendar navigation only changes the obligation schedule view; production exports should derive their period from immutable dataset and snapshot timestamps.</small></span></div>
           </div>
@@ -683,6 +919,7 @@ export default function App() {
   const [page, setPage] = useState<Page>("Overview");
   const [commandOpen, setCommandOpen] = useState(false);
   const [financialData, setFinancialData] = useState<ExampleData>(exampleData);
+  const [portfolioDatasets, setPortfolioDatasets] = useState<PortfolioDataset[]>([]);
   const [financialDataLoaded, setFinancialDataLoaded] = useState(false);
   const [financialDataError, setFinancialDataError] = useState("");
   const [reviews, setReviews] = useState<TransferReviews | null>(null);
@@ -711,6 +948,17 @@ export default function App() {
     setFinancialData(current => ({ ...current, transactions: current.transactions.map(transaction =>
       transaction.id === id ? { ...transaction, status } : transaction) }));
   }, []);
+  const onPolicySaved = useCallback((policy: ExamplePolicy, archivedPolicyNames: string[] = []) => {
+    setFinancialData(current => {
+      let found = false;
+      const policies = current.policies.map(existing => {
+        if (existing.name === policy.name) { found = true; return policy; }
+        if (archivedPolicyNames.includes(existing.name)) return { ...existing, state: "Archived" };
+        return existing;
+      });
+      return { ...current, policies: found ? policies : [...policies, policy] };
+    });
+  }, []);
 
   const refresh = useCallback(async (withReviews: boolean, force = false) => {
     if (!USER_ID) {
@@ -729,7 +977,8 @@ export default function App() {
         body = await financialResponse.json() as FinancialDataResponse;
         if (!financialResponse.ok || !body.ok) throw new Error(body.ok ? `Financial data request failed with status ${financialResponse.status}.` : body.error.message);
         if (body.data.userId !== USER_ID || !Array.isArray(body.data.assets) || !Array.isArray(body.data.transactions)
-          || !Array.isArray(body.data.policies) || !Array.isArray(body.data.nodes) || !Array.isArray(body.data.edges)) {
+          || !Array.isArray(body.data.policies) || !Array.isArray(body.data.nodes) || !Array.isArray(body.data.edges)
+          || !Array.isArray(body.data.datasets)) {
           throw new Error("Financial data endpoint returned an invalid response.");
         }
       } catch (error) {
@@ -743,6 +992,7 @@ export default function App() {
       if (controller.signal.aborted || sequence !== refreshSequence.current) return;
       setFinancialData({ assets: body.data.assets, transactions: body.data.transactions, policies: body.data.policies,
         nodes: body.data.nodes, edges: body.data.edges });
+      setPortfolioDatasets(body.data.datasets);
       setFinancialDataLoaded(true);
       setFinancialDataError("");
 
@@ -801,9 +1051,9 @@ export default function App() {
   const pages: Record<Page, React.ReactNode> = {
     "Overview": <Overview data={financialData} onNewTransfer={openTransfer} />,
     "Digital Twin": <DigitalTwin data={financialData} reviews={reviews} refreshError={twinRefreshError} />,
-    "Portfolios": <Portfolios data={financialData} userId={USER_ID} onOpenTwin={() => setPage("Digital Twin")} />,
+    "Portfolios": <Portfolios data={financialData} datasets={portfolioDatasets} userId={USER_ID} onOpenTwin={() => setPage("Digital Twin")} />,
     "Transactions": <Transactions data={financialData} onNewTransfer={openTransfer} notice={transferNotice} />,
-    "Policy Engine": <PolicyEngine data={financialData} onDecision={onPolicyDecision} />,
+    "Policy Engine": <PolicyEngine data={financialData} userId={USER_ID} onDecision={onPolicyDecision} onPolicySaved={onPolicySaved} />,
     "Reporting": <Reporting data={financialData} />,
   };
   if (!USER_ID || !financialDataLoaded) return null;

@@ -12,6 +12,8 @@ import { getExampleData, getImportedDataset, saveExampleData } from "../../src/l
 import { exampleData } from "../../src/contracts";
 
 const datasetId = `import-route-test-${crypto.randomUUID()}`;
+const databasePath = process.env.CUSTODYOS_DATABASE_PATH;
+if (!databasePath) throw new Error("Unit test database path was not provisioned.");
 const context = { params: Promise.resolve({ datasetId }) };
 const payload = (id = datasetId) => {
   const copy = structuredClone(cascadeImport);
@@ -31,7 +33,7 @@ describe("dataset import and retrieval", () => {
     invalid.accounts[1].externalId = invalid.accounts[0].externalId;
     invalid.sourceRecords[1].externalId = invalid.sourceRecords[0].externalId;
     invalid.dependencies[0].predecessorObligationId = "missing-obligation";
-    invalid.initialCashBalances[0].reservedMinorUnits = "999999";
+    invalid.initialCashBalances[0].reservedMinorUnits = "99999999999";
     const response = await post(invalid);
     expect(response.status).toBe(422);
     const body = await response.json();
@@ -51,10 +53,10 @@ describe("dataset import and retrieval", () => {
     expect(source?.snapshot.datasetRevision).toBe("1");
     expect(source?.auditEvents[0].id).toBe(body.data.auditEventId);
     expect(source?.auditEvents[0].actorId).toBe("demo-user");
-    const persisted = new DatabaseSync("data/test.sqlite");
+    const persisted = new DatabaseSync(databasePath);
     expect((persisted.prepare("SELECT dataset_revision FROM custody_snapshots WHERE user_id = ? AND id = ?").get("demo-user", body.data.snapshotId) as { dataset_revision: string }).dataset_revision).toBe("1");
     persisted.close();
-    const fromNewProcess = execFileSync(process.execPath, ["-e", "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync('data/test.sqlite');process.stdout.write(String(db.prepare('SELECT COUNT(*) AS count FROM custody_snapshots WHERE user_id=? AND id=?').get(process.argv[1],process.argv[2]).count));db.close()", "demo-user", body.data.snapshotId], { cwd: process.cwd(), encoding: "utf8" });
+    const fromNewProcess = execFileSync(process.execPath, ["-e", "const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(process.argv[1]);process.stdout.write(String(db.prepare('SELECT COUNT(*) AS count FROM custody_snapshots WHERE user_id=? AND id=?').get(process.argv[2],process.argv[3]).count));db.close()", databasePath, "demo-user", body.data.snapshotId], { cwd: process.cwd(), encoding: "utf8" });
     expect(fromNewProcess).toBe("1");
     const work = await (await workspace(new Request(`http://localhost/api/datasets/${datasetId}/workspace`), context)).json();
     expect(work.data.snapshot).toEqual(source?.snapshot);
@@ -65,7 +67,7 @@ describe("dataset import and retrieval", () => {
     const assessment = await (await custody(new Request(`http://localhost/api/datasets/${datasetId}/custody`), context)).json();
     expect(assessment.data.assessment.obligations).toHaveLength(3);
     const simulationRequest = { contractVersion: "1.0.0", datasetId, expectedDatasetRevision: "1", baseSnapshotId: body.data.snapshotId,
-      interventions: [{ id: "fund-test", kind: "cash_transfer", datasetId, baseSnapshotId: body.data.snapshotId, expectedDatasetRevision: "1", rationale: "test", sourceAccountId: "acct-reserve", targetAccountId: "acct-a", amount: { currency: "USD", minorUnits: "1000" }, effectiveAt: "2026-10-09T13:05:00Z" }] };
+      interventions: [{ id: "fund-test", kind: "cash_transfer", datasetId, baseSnapshotId: body.data.snapshotId, expectedDatasetRevision: "1", rationale: "test", sourceAccountId: "acct-reserve", targetAccountId: "acct-a", amount: { currency: "USD", minorUnits: "1000000000" }, effectiveAt: "2026-10-09T13:05:00Z" }] };
     const simulation = await (await simulate(new Request(`http://localhost/api/datasets/${datasetId}/simulations`, { method: "POST", body: JSON.stringify(simulationRequest) }), context)).json();
     expect(simulation.data.result.status).toBe("valid");
     expect(simulation.data.result.comparison.newlySettledObligationIds).toHaveLength(3);
@@ -73,7 +75,7 @@ describe("dataset import and retrieval", () => {
   });
 
   it("returns the requesting user's sample data and imported datasets", async () => {
-    const authenticationDatabase = new DatabaseSync(process.env.CUSTODYOS_DATABASE_PATH ?? "data/custodyos.sqlite");
+    const authenticationDatabase = new DatabaseSync(databasePath);
     authenticationDatabase.prepare(`
       INSERT OR IGNORE INTO custody_authenticate (user_id, password, otp_secret)
       VALUES (?, ?, ?)
@@ -122,7 +124,7 @@ describe("dataset import and retrieval", () => {
     it("round-trips the example collections in their existing object format", async () => {
       await saveExampleData(exampleData);
       expect(await getExampleData()).toEqual(exampleData);
-      const database = new DatabaseSync("data/test.sqlite");
+      const database = new DatabaseSync(databasePath);
       expect((database.prepare("SELECT COUNT(*) AS count FROM example_assets WHERE user_id = ?").get("demo-user") as { count: number }).count).toBe(exampleData.assets.length);
       expect((database.prepare("SELECT COUNT(*) AS count FROM example_twin_edges WHERE user_id = ?").get("demo-user") as { count: number }).count).toBe(exampleData.edges.length);
       database.close();
@@ -166,7 +168,7 @@ describe("dataset import and retrieval", () => {
     const source = await getImportedDataset(datasetId);
     const response = await simulate(new Request(`http://localhost/api/datasets/${datasetId}/simulations`, { method: "POST", body: JSON.stringify({
       contractVersion: "1.0.0", datasetId, expectedDatasetRevision: "2", baseSnapshotId: source?.snapshot.id,
-      interventions: [{ id: "stale", kind: "cash_transfer", datasetId, baseSnapshotId: source?.snapshot.id, expectedDatasetRevision: "2", rationale: "test", sourceAccountId: "acct-reserve", targetAccountId: "acct-a", amount: { currency: "USD", minorUnits: "1000" }, effectiveAt: "2026-10-09T13:05:00Z" }],
+      interventions: [{ id: "stale", kind: "cash_transfer", datasetId, baseSnapshotId: source?.snapshot.id, expectedDatasetRevision: "2", rationale: "test", sourceAccountId: "acct-reserve", targetAccountId: "acct-a", amount: { currency: "USD", minorUnits: "1000000000" }, effectiveAt: "2026-10-09T13:05:00Z" }],
     }) }), context);
     expect(response.status).toBe(409);
     expect((await response.json()).error.code).toBe("REVISION_CONFLICT");
@@ -211,7 +213,7 @@ describe("dataset import and retrieval", () => {
 
   it("rolls back the dataset and snapshot if the audit write fails", async () => {
     const id = `rollback-${crypto.randomUUID()}`;
-    const connection = new DatabaseSync("data/test.sqlite");
+    const connection = new DatabaseSync(databasePath);
     connection.exec(`CREATE TRIGGER fail_import_audit BEFORE INSERT ON custody_audit_events WHEN NEW.dataset_id = '${id}' BEGIN SELECT RAISE(ABORT, 'audit failure'); END`);
     try {
       await expect(post(payload(id))).rejects.toThrow("audit failure");
