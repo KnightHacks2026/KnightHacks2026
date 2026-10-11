@@ -1,9 +1,16 @@
 -- Seed the CustodyOS prototype example records for the local demo user.
 -- Safe to rerun: existing rows are left unchanged by INSERT OR IGNORE.
+-- Demo login: username demo-user, password demo-password, TOTP secret JBSWY3DPEHPK3PXP.
 
 .bail on
 PRAGMA foreign_keys = ON;
 BEGIN IMMEDIATE;
+
+CREATE TABLE IF NOT EXISTS custody_authenticate (
+  user_id TEXT NOT NULL PRIMARY KEY,
+  password TEXT NOT NULL,
+  otp_secret TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS example_data_initialized (
   user_id TEXT PRIMARY KEY
@@ -126,6 +133,9 @@ VALUES
 
 INSERT OR IGNORE INTO example_data_initialized (user_id)
 VALUES ('demo-user');
+
+INSERT OR IGNORE INTO custody_authenticate (user_id, password, otp_secret)
+VALUES ('demo-user', '41bd876b085d6031cb0e04de35b88d77f83a4ba39f879fee40805ac19e356023', 'JBSWY3DPEHPK3PXP');
 
 COMMIT;
 
