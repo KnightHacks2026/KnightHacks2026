@@ -1,1 +1,3 @@
-# KnightHacksBNYChallenge
+# CustodyOS
+
+CustodyOS is a prototype financial operations platform for institutional custody teams. It brings transaction monitoring, reconciliation, settlement-risk review, liquidity context, policy-based approvals, and audit history into one workspace. Analysts can trace settlement dependencies, inspect rule-based risk explanations, and simulate potential interventions before making a human-approved decision. Built for the KnightHacks BNY Challenge, the demo uses sample data to illustrate how custody teams could move from fragmented, reactive exception handling toward clearer, more proactive operations.
