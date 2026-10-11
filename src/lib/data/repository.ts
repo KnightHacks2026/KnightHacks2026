@@ -12,6 +12,11 @@ const demoUserId = () => process.env.CUSTODYOS_DEMO_USER_ID ?? "demo-user";
 const legacyUserId = () => process.env.CUSTODYOS_LEGACY_USER_ID ?? "demo-user";
 
 const schema = `
+  CREATE TABLE IF NOT EXISTS custody_authenticate (
+    user_id TEXT NOT NULL PRIMARY KEY,
+    password TEXT NOT NULL,
+    otp_secret TEXT NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS custody_datasets (
     user_id TEXT NOT NULL, id TEXT NOT NULL, revision TEXT NOT NULL, contract_version TEXT NOT NULL,
     name TEXT NOT NULL, as_of TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL,

@@ -104,7 +104,7 @@ export default function CustodyLogin() {
             </label>
             <label className={styles.field}>
               <span>ONE TIME PASSWORD</span>
-              <input type="text" name="otp" inputMode="numeric" autoComplete="one-time-code" placeholder="123-456" required />
+              <input type="text" name="otp" inputMode="numeric" autoComplete="one-time-code" placeholder="123456" required />
             </label>
             <button className={styles.enterButton} type="submit">
               Log in <span aria-hidden="true">→</span>
