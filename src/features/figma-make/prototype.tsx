@@ -41,6 +41,16 @@ type ReviewsResponse =
   | { ok: true; data: TransferReviews }
   | { ok: false; error: { message: string } };
 
+type ReconciliationException = {
+  id: string; reasonCode: string; severity: "info" | "warning" | "critical"; summary: string;
+  sourceRecordIds: string[]; obligationIds: string[]; evidence: { sourceRecordId: string; sourceSystem: string; externalId: string }[];
+};
+
+type ReconciliationAssessment = {
+  datasetId: string; snapshotId: string; asOf: string; exceptions: ReconciliationException[];
+  indicators: { obligationCount: number; settledCount: number; pendingCount: number; blockedCount: number; failedCount: number; readyCount: number; exceptionCount: number; exceptionCountsBySeverity: { info: number; warning: number; critical: number }; settlementReadiness: { ready: number; eligible: number } };
+};
+
 function parseUsdValue(value: string, description: string) {
   const match = value.match(/^\s*\$?([\d,]+(?:\.\d+)?)\s*([KMBT]?)\s*$/i);
   if (!match) {
@@ -384,13 +394,41 @@ function Overview({ data, onNewTransfer }: { data: ExampleData; onNewTransfer: (
   );
 }
 
-function Portfolios({ data }: { data: ExampleData }) {
+function Portfolios({ data, onOpenTwin }: { data: ExampleData; onOpenTwin: () => void }) {
   const { assets } = data;
   const netAssetValue = sumAssetValues(assets);
   const [active, setActive] = useState("Consolidated");
+  const [reconcileOpen, setReconcileOpen] = useState(false);
+  const [reconcileLoading, setReconcileLoading] = useState(false);
+  const [reconcileError, setReconcileError] = useState("");
+  const [assessment, setAssessment] = useState<ReconciliationAssessment | null>(null);
+  const [datasetName, setDatasetName] = useState("");
+  const [selectedExceptionId, setSelectedExceptionId] = useState("");
+  const selectedException = assessment?.exceptions.find(item => item.id === selectedExceptionId) ?? assessment?.exceptions[0];
+  const readiness = assessment?.indicators.settlementReadiness;
+  const readinessPercent = readiness && readiness.eligible > 0 ? Math.round(readiness.ready / readiness.eligible * 100) : 0;
+
+  const runReconciliation = async () => {
+    setReconcileOpen(true); setReconcileLoading(true); setReconcileError(""); setAssessment(null); setSelectedExceptionId("");
+    try {
+      const dataResponse = await fetch(`/api/users/${encodeURIComponent(DEMO_USER_ID)}/financial-data`, { cache: "no-store" });
+      const dataBody = await dataResponse.json() as { ok: boolean; data?: { datasets?: { dataset?: { id?: string; name?: string; status?: string } }[] }; error?: { message?: string } };
+      if (!dataResponse.ok || !dataBody.ok) throw new Error(dataBody.error?.message || "Unable to load imported datasets.");
+      const dataset = dataBody.data?.datasets?.find(item => item.dataset?.status === "ready") ?? dataBody.data?.datasets?.[0];
+      const datasetId = dataset?.dataset?.id ?? "dataset-cascade";
+      const response = await fetch(`/api/datasets/${encodeURIComponent(datasetId)}/custody`, { cache: "no-store" });
+      const body = await response.json() as { ok: boolean; data?: { assessment?: ReconciliationAssessment }; error?: { message?: string } };
+      if (!response.ok || !body.ok || !body.data?.assessment) throw new Error(body.error?.message || "The custody assessment did not return a reconciliation result.");
+      setDatasetName(dataset?.dataset?.name || "Three-leg settlement cascade · built-in fixture");
+      setAssessment(body.data.assessment);
+      setSelectedExceptionId(body.data.assessment.exceptions[0]?.id ?? "");
+    } catch (error) {
+      setReconcileError(error instanceof Error ? error.message : "Unable to run reconciliation.");
+    } finally { setReconcileLoading(false); }
+  };
   return (
     <main className="page">
-      <PageHeading eyebrow="PORTFOLIOS / CONSOLIDATED" title="Asset Inventory" description="Position-level visibility across custody, staking, settlement, and treasury accounts." actions={<button className="button secondary">Reconcile</button>} />
+      <PageHeading eyebrow="PORTFOLIOS / CONSOLIDATED" title="Asset Inventory" description="Position-level visibility across custody, staking, settlement, and treasury accounts." actions={<button className="button secondary" onClick={runReconciliation}>Run reconciliation</button>} />
       <div className="portfolio-switcher">{["Consolidated", "Cold Storage", "Treasury", "Client Omnibus"].map(x => <button className={active === x ? "active" : ""} onClick={() => setActive(x)} key={x}>{x}</button>)}</div>
       <section className="portfolio-ledger">
         <div className="portfolio-overview">
@@ -428,6 +466,31 @@ function Portfolios({ data }: { data: ExampleData }) {
           </button>
         ))}
       </section>
+      {reconcileOpen && <div className="reconcile-overlay" onMouseDown={() => setReconcileOpen(false)}>
+        <aside className="reconcile-panel" role="dialog" aria-modal="true" aria-labelledby="reconcile-title" onMouseDown={event => event.stopPropagation()}>
+          <div className="reconcile-head"><div><p className="eyebrow">CUSTODY / DETERMINISTIC ASSESSMENT</p><h2 id="reconcile-title">Reconciliation results</h2></div><button type="button" aria-label="Close reconciliation" onClick={() => setReconcileOpen(false)}>×</button></div>
+          {reconcileLoading && <div className="reconcile-state" role="status"><i />Comparing balances, obligations, and source evidence…</div>}
+          {reconcileError && <div className="reconcile-error" role="alert"><strong>Reconciliation unavailable</strong><p>{reconcileError}</p><button type="button" className="button secondary" onClick={runReconciliation}>Try again</button></div>}
+          {assessment && <>
+            <div className="reconcile-context"><div><span>DATASET</span><strong>{datasetName}</strong></div><div><span>SNAPSHOT</span><strong>{new Date(assessment.asOf).toLocaleString()}</strong></div></div>
+            <div className="reconcile-summary">
+              <div><span>SETTLEMENT READY</span><strong>{readinessPercent}%</strong><small>{assessment.indicators.readyCount} of {readiness?.eligible ?? 0} eligible</small></div>
+              <div><span>OPEN EXCEPTIONS</span><strong>{assessment.indicators.exceptionCount}</strong><small>{assessment.indicators.exceptionCountsBySeverity.critical} critical · {assessment.indicators.exceptionCountsBySeverity.warning} warning</small></div>
+              <div><span>OBLIGATIONS</span><strong>{assessment.indicators.obligationCount}</strong><small>{assessment.indicators.blockedCount} blocked · {assessment.indicators.failedCount} failed</small></div>
+            </div>
+            <div className="reconcile-body">
+              <section className="exception-list"><div className="reconcile-section-title"><span>EXCEPTION QUEUE</span><em>{assessment.exceptions.length}</em></div>
+                {assessment.exceptions.length === 0 && <p className="reconcile-empty">No custody breaks were detected in this snapshot.</p>}
+                {assessment.exceptions.map(item => <button type="button" key={item.id} className={selectedException?.id === item.id ? "active" : ""} onClick={() => setSelectedExceptionId(item.id)}><i className={item.severity} /><span><strong>{item.reasonCode.replaceAll("_", " ")}</strong><small>{item.obligationIds.join(", ") || "No obligation reference"}</small></span><em>{item.severity}</em></button>)}
+              </section>
+              <section className="exception-detail">
+                {selectedException ? <><div className="reconcile-section-title"><span>BREAK EVIDENCE</span><em className={selectedException.severity}>{selectedException.severity}</em></div><h3>{selectedException.reasonCode.replaceAll("_", " ")}</h3><p>{selectedException.summary}</p><dl><div><dt>Obligations</dt><dd>{selectedException.obligationIds.join(", ") || "None"}</dd></div><div><dt>Source records</dt><dd>{selectedException.sourceRecordIds.join(", ") || "Missing"}</dd></div></dl><div className="evidence-records">{selectedException.evidence.length ? selectedException.evidence.map(item => <div key={item.sourceRecordId}><strong>{item.sourceSystem}</strong><span>{item.externalId}</span><small>{item.sourceRecordId}</small></div>) : <p>No supporting source evidence was attached.</p>}</div><button type="button" className="button primary" onClick={() => { setReconcileOpen(false); onOpenTwin(); }}>View dependencies in Digital Twin</button></> : <p className="reconcile-empty">Select an exception to inspect its evidence.</p>}
+              </section>
+            </div>
+            <p className="reconcile-disclosure">Read-only assessment. Balances, obligations, and settlement states were not modified.</p>
+          </>}
+        </aside>
+      </div>}
     </main>
   );
 }
@@ -650,7 +713,7 @@ export default function App() {
   const pages: Record<Page, React.ReactNode> = {
     "Overview": <Overview data={financialData} onNewTransfer={openTransfer} />,
     "Digital Twin": <DigitalTwin data={financialData} reviews={reviews} refreshError={twinRefreshError} />,
-    "Portfolios": <Portfolios data={financialData} />,
+    "Portfolios": <Portfolios data={financialData} onOpenTwin={() => setPage("Digital Twin")} />,
     "Transactions": <Transactions data={financialData} onNewTransfer={openTransfer} notice={transferNotice} />,
     "Policy Engine": <PolicyEngine data={financialData} onDecision={onPolicyDecision} />,
     "Reporting": <Reporting />,
