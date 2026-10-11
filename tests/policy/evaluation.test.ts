@@ -22,9 +22,17 @@ describe("local demo policy evaluation", () => {
   });
 
   it("matches thresholds only for the configured asset", () => {
-    const policies = [{ name: "BTC threshold", asset: "BTC", threshold: "4" }];
+    const policies = [{ name: "BTC threshold", asset: "BTC", threshold: "4", effectiveAt: "2026-10-10T11:59:59.000Z" }];
     expect(evaluateTransfer({ ...transfer, amount: "5" }, true, policies).checks.at(-1)?.result).toBe("Approval required");
     expect(evaluateTransfer({ ...transfer, asset: "USDC", amount: "5000000" }, true, policies).checks).toHaveLength(4);
+    expect(evaluateTransfer({ ...transfer, createdAt: "2026-10-10T11:00:00.000Z" }, true, policies).checks).toHaveLength(4);
+    expect(evaluateTransfer({ ...transfer, amount: "4.000" }, true, policies).checks.at(-1)?.result).toBe("Passed");
+  });
+
+  it("keeps the synthetic route approvable for positive amounts above ten units", () => {
+    const result = evaluateTransfer({ ...transfer, amount: "5000000" }, true);
+    expect(result.canApprove).toBe(true);
+    expect(result.checks[1]).toMatchObject({ label: "Valid positive asset amount", result: "Passed", mandatory: true });
   });
 
   it("requires evidence for destinations outside the synthetic fixture", () => {

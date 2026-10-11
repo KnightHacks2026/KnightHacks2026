@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./authenticated-test";
 
 test("Figma Make opens Overview on arrival and refresh while preserving six screens", async ({ page }) => {
   await page.goto("/");
@@ -21,6 +21,35 @@ test("Figma Make opens Overview on arrival and refresh while preserving six scre
     await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
     await expect(page.locator(".section-tabs button.active")).toHaveText(tab);
   }
+});
+
+test("both CustodyOS logos return every dashboard tab to Overview without ending the session", async ({ page }) => {
+  await page.goto("/");
+  const tabs = ["Overview", "Digital Twin", "Portfolios", "Transactions", "Policy Engine", "Reporting"];
+  for (const logo of [".brand-mark", ".wordmark"]) {
+    for (const tab of tabs) {
+      await page.locator(".section-tabs").getByRole("button", { name: tab, exact: true }).click();
+      await page.locator(logo).click();
+      await expect(page.getByRole("heading", { name: "Operational Overview", level: 1 })).toBeVisible();
+      await expect(page.locator(".section-tabs button.active")).toHaveText("Overview");
+      expect(new URL(page.url()).pathname).toBe("/");
+      expect(await page.evaluate(() => sessionStorage.getItem("userid"))).toBe("demo-user");
+    }
+  }
+  await page.locator(".section-tabs").getByRole("button", { name: "Digital Twin" }).click();
+  const wordmark = page.locator(".wordmark");
+  await page.keyboard.press("Tab");
+  await wordmark.focus();
+  await expect(wordmark).toBeFocused();
+  await expect(wordmark).toHaveCSS("outline-style", "solid");
+  await wordmark.press("Enter");
+  await expect(page.getByRole("heading", { name: "Operational Overview", level: 1 })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator(".section-tabs").getByRole("button", { name: "Portfolios" }).click();
+  await wordmark.focus();
+  await wordmark.press("Space");
+  await expect(page.getByRole("heading", { name: "Operational Overview", level: 1 })).toBeVisible();
 });
 
 test("Assets Under Custody final bar aligns with 10 OCT", async ({ page }) => {

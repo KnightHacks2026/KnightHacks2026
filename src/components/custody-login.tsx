@@ -111,7 +111,11 @@ export default function CustodyLogin() {
                 });
                 const result: unknown = await response.json();
                 if (!response.ok) {
-                  setLoginError("Invalid username, password, or one-time password.");
+                  setLoginError(response.status === 401
+                    ? "Sign-in failed. Check your username and password, then use the current code from your authenticator. If you have no local account, run npm.cmd run auth:setup -- demo-user in this worktree."
+                    : response.status === 400
+                      ? "Enter your username, password, and a six-digit authenticator code."
+                      : "Sign-in service is unavailable. Please try again.");
                   return;
                 }
                 if (

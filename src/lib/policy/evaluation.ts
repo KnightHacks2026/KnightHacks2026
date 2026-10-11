@@ -30,6 +30,7 @@ export interface AmountThresholdPolicy {
   name: string;
   asset: string;
   threshold: string;
+  effectiveAt: string;
 }
 
 function decimalGreaterThan(left: string, right: string): boolean {
@@ -37,11 +38,10 @@ function decimalGreaterThan(left: string, right: string): boolean {
   const [leftWhole, leftFraction = ""] = left.split(".");
   const [rightWhole, rightFraction = ""] = right.split(".");
   const scale = Math.max(leftFraction.length, rightFraction.length);
-  const leftValue = BigInt(leftWhole + leftFraction.padEnd(scale, "0"));
-  const rightValue = BigInt(rightWhole + rightFraction.padEnd(scale, "0"));
-  return leftValue > rightValue;
+  return BigInt(leftWhole + leftFraction.padEnd(scale, "0")) > BigInt(rightWhole + rightFraction.padEnd(scale, "0"));
 }
 
+/** Amounts must be positive decimals; inventory sufficiency is checked separately. */
 function validPositiveAmount(amount: string): boolean {
   if (!/^\d+(?:\.\d+)?$/.test(amount)) return false;
   return /[1-9]/.test(amount);
@@ -60,12 +60,14 @@ export function evaluateTransfer(transfer: ReviewTransfer, sourceOwned: boolean,
       detail: demoRoute ? "Out of scope for the synthetic demo route. No signer, sanctions, or allowlist verification is claimed." : "Signer quorum, screening, and allowlist evidence are unavailable; approval is blocked." },
   ];
   for (const policy of amountPolicies) {
-    if (policy.asset !== transfer.asset) continue;
+    if (policy.asset !== transfer.asset || transfer.createdAt < policy.effectiveAt) continue;
     const matched = decimalGreaterThan(transfer.amount, policy.threshold);
     checks.push({
       id: `custom:${policy.name}`,
       label: policy.name,
       result: matched ? "Approval required" : "Passed",
+      // Transfers are already held for a human decision. A match is recorded as a
+      // review reason; it does not authorize or block a human from deciding.
       mandatory: false,
       detail: matched
         ? `Matched enforced rule: ${transfer.asset} amount ${transfer.amount} exceeds ${policy.threshold}. Human approval is required.`
